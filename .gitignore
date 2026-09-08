@@ -1,0 +1,26 @@
+# Godot 4
+.godot/
+/android/
+
+# dot-core is a separate repository. For local development, symlink it:
+#   ln -s ../../dot-core/addons/dot_core addons/dot_core
+# Consumers copy both addons into their own project.
+/addons/dot_core
+
+# dot-map and dot-server are OPTIONAL for this addon and are linked only so the
+# self-test can run the integrations against the real thing. Without them the suite
+# still runs and says out loud that those sections were not covered — which is the
+# point: "0 failures" from a suite that ran nothing is how two ends never meet.
+/addons/dot_map
+/addons/dot_server
+
+# Exports
+build/
+export_presets.cfg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
