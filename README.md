@@ -1,6 +1,5 @@
-# dot-vote
 
-**Voting for what plays next — games, maps or modes — and every part of it is a setting.**
+An asset that allows users to vote for what plays next — games, maps or modes — and every part of it is a setting.
 
 Rock the vote, nominations, per-choice time limits, a ballot, and the change at the
 end of it. The shape every server in this genre has had since 2005 (`rtv`,
