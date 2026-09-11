@@ -1,10 +1,7 @@
 
 An asset that allows users to vote for what plays next — games, maps or modes — and every part of it is a setting.
 
-Rock the vote, nominations, per-choice time limits, a ballot, and the change at the
-end of it. The shape every server in this genre has had since 2005 (`rtv`,
-`nominate`, `mapchooser`, `timeleft`, `extend`), rebuilt so that a community that
-wants it to work differently changes a number rather than forking it.
+Rock the vote, nominations, per-choice time limits, a ballot, and the change at the end of it. The shape every server in this genre has had since 2005 (`rtv`, `nominate`, `mapchooser`, `timeleft`, `extend`), rebuilt so that a community that wants it to work differently changes a number rather than forking it.
 
 ```gdscript
 var votes := DotVoteDirector.new()
@@ -58,9 +55,7 @@ DotVoteMapSource.of(catalogue, session)     # dot-map's maps
 DotVoteListSource.of(my_choices)            # anything else, with a Callable
 ```
 
-The two integrations are duck-typed, so this addon installs in a project that has
-never heard of dot-server or dot-map. Per-choice settings live in the thing's own
-metadata, so a game's time limit is written beside the game:
+The two integrations are duck-typed, so this addon installs in a project that has never heard of dot-server or dot-map. Per-choice settings live in the thing's own metadata, so a game's time limit is written beside the game:
 
 ```yaml
 # content/arena/game.yml
@@ -70,9 +65,7 @@ metadata:
     weight: 2.0
 ```
 
-A source that cannot change anything is legitimate: the director runs the whole vote
-and emits `change_due` for the host to act on, which is what a client mirroring a
-server's ballot does.
+A source that cannot change anything is legitimate: the director runs the whole vote and emits `change_due` for the host to act on, which is what a client mirroring a server's ballot does.
 
 ## Configuring it
 
@@ -111,14 +104,11 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-231 checks. The last two sections run this addon against a real `DotGameManager` and
-a real `DotMapCatalogue` and change what they are running, because "the two ends have
-never met" is how the expensive bugs in this family start.
+231 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
 
 ## Dependencies
 
-**dot-core**, and nothing else. dot-server and dot-map are optional and are reached
-by duck typing.
+**dot-core**, and nothing else. dot-server and dot-map are optional and are reached by duck typing.
 
 ```bash
 ln -s ../../dot-core/addons/dot_core addons/dot_core
