@@ -1,5 +1,5 @@
 
-An asset that allows users to vote for what plays next — games, maps or modes — and every part of it is a setting.
+An asset that allows users to vote for what plays next, whether games, maps or modes, and every part of it is a setting.
 
 Rock the vote, nominations, per-choice time limits, a ballot, and the change at the end of it. The shape every server in this genre has had since 2005 (`rtv`, `nominate`, `mapchooser`, `timeleft`, `extend`), rebuilt so that a community that wants it to work differently changes a number rather than forking it.
 
@@ -24,11 +24,11 @@ That is the whole integration. Everything else is configuration.
 | --- | --- |
 | **Rock the vote** | A fraction of the players, with a minimum player count, a delay at the start of every map, idempotent per player, and votes withdrawn when their owner disconnects. |
 | **Nominations** | Per-player caps, a total cap, seconding (so "most nominated" means something), admin bypass, and reserved places on the ballot so three organised players cannot decide every map. |
-| **Time limits** | In seconds, in rounds, or both — **per choice**, so a forty-minute surf map and a ten-minute bhop map are not forced under one number. Multiple warnings, extending with a cap. |
+| **Time limits** | In seconds, in rounds, or both, **per choice**, so a forty-minute surf map and a ten-minute bhop map are not forced under one number. Multiple warnings, extending with a cap. |
 | **The ballot** | Up to N options, filled five ways, with "extend" and "none of these" as options a server can turn on or off. Opens a configurable lead time *before* the map ends, so the change happens on time. |
-| **Counting** | Plurality, approval, instant runoff, or a majority runoff. Quorums, weighted ballots, and five tie-breaks — four of which a player watching can predict. |
+| **Counting** | Plurality, approval, instant runoff, or a majority runoff. Quorums, weighted ballots, and five tie-breaks, four of which a player watching can predict. |
 | **Cooldowns** | In plays or in wall-clock minutes, per choice, clamped against the pool so a long cooldown on a short rotation cannot exclude everything. |
-| **Applying** | Immediately, at the end of the round, or when the clock runs out — with a delay so players can read the result. |
+| **Applying** | Immediately, at the end of the round, or when the clock runs out, with a delay so players can read the result. |
 | **Commands** | `nominate`, `rtv`, `votefor`, `timeleft`, `nextmap`, `revote`, `extend`, `endvote`, and more, on a dot-server console and in chat. Every name configurable. |
 
 ## The pieces
@@ -36,14 +36,14 @@ That is the whole integration. Everything else is configuration.
 | | |
 | --- | --- |
 | `DotVoteRules` | Every policy decision, as one `DotConfig`. Layers `defaults < file < DOT_VOTE_* < --vote-*`, and enum settings are written **by name** (`method: instant_runoff`). |
-| `DotVoteChoice` | One thing that can be voted for: an id, a name, and the few facts a ballot needs — player counts, its own time limit, its own cooldown, its weight. |
+| `DotVoteChoice` | One thing that can be voted for: an id, a name, and the few facts a ballot needs: player counts, its own time limit, its own cooldown and its weight. |
 | `DotVoteSource` | Where the choices come from and what "play this" means. The one seam. |
 | `DotVoteDirector` | The `Node` that joins them, driven by one `advance(delta)` per tick. |
 | `DotVoteClock` | The limit, the warnings, the extends and the rock-the-vote. |
 | `DotVoteBallot` | The open ballot and the four counting methods. |
 | `DotVoteNominations` | What players have asked for, in order. |
 | `DotVoteHistory` | What has been played, and what is still on cooldown. |
-| `DotVoteResult` | What was decided, and **how** — including which tie-break, so the announcement can explain itself. |
+| `DotVoteResult` | What was decided, and **how**, including which tie-break, so the announcement can explain itself. |
 
 ## Pointing it at something
 
