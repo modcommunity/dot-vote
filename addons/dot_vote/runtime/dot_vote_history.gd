@@ -15,7 +15,8 @@ extends RefCounted
 ## everything, because a rotation that offers nothing leaves the server where it is
 ## for ever with no error anywhere.
 
-const CHANNEL := "vote.history"
+# No log channel: in-memory state asked many times per ballot fill. The one condition an
+# operator must hear about -- everything on cooldown -- is logged by DotVoteDirector.
 
 ## Most recently played first.
 var played: Array[StringName] = []

@@ -24,7 +24,8 @@ extends RefCounted
 ## and a rule; presenting it is the game's job, and [DotVoteDirector] is where the two
 ## are joined.
 
-const CHANNEL := "vote.ballot"
+# No log channel: a tally and a rule. DotVoteDirector, which joins it to players and a
+# clock, logs a vote opening and its result; a refused cast goes back to the voter.
 
 ## The pseudo-option for "keep this and add time to it".
 const EXTEND := &"__extend__"
