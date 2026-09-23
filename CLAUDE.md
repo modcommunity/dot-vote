@@ -157,7 +157,7 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-344 checks, non-zero on failure. Three sections matter more than the rest:
+345 checks, non-zero on failure. Three sections matter more than the rest:
 
 - **"Every setting is read by something"** runs this family's own mechanical detector
   over `DotVoteRules` — 80 settings in one resource is either this addon's best

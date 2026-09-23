@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 344
+const CHECKS := 345
 
 var _passed := 0
 var _failed := 0
@@ -2881,6 +2881,17 @@ func _test_real_game_manager() -> void:
 	_check(
 		is_equal_approx(director.clock.duration, 60.0),
 		"under the NEW game's time limit (%.0f)" % director.clock.duration
+	)
+
+	# What a game's own map vote layers over its defaults: the running game's metadata,
+	# found through the registry with nothing named. Duck typing that is wrong returns an
+	# empty dictionary, which is indistinguishable from a game with nothing configured —
+	# so it is asserted against a real manager rather than trusted.
+	var running := DotVoteGameSource.running_game_metadata("vote")
+	_check(
+		int(running.get("time_limit_sec", 0)) == 60,
+		"a game can read its own metadata off the running descriptor (%s)" % str(running),
+		"the layer between a game's code defaults and its operator's file"
 	)
 
 	# The console and chat commands, on the real console this server booted with.

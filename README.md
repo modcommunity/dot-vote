@@ -139,7 +139,7 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-344 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
+345 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
 
 ## Dependencies
 
