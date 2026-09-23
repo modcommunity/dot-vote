@@ -46,8 +46,14 @@ var rounds: Array = []
 var runoff_ids: Array[StringName] = []
 
 ## Ballots cast, and how many people could have cast one.
+##
+## [member votes_cast] includes abstentions: an abstainer was asked and answered.
 var votes_cast: int = 0
 var eligible: int = 0
+
+## Ballots cast as "no vote". Counted toward nothing; see
+## [member DotVoteRules.include_abstain].
+var abstained: int = 0
 
 ## Whether the ballot was decided by a tie-break, and by which one.
 ##
@@ -115,6 +121,7 @@ func describe() -> Dictionary:
 		"outcome": Outcome.keys()[outcome],
 		"winner": String(winner_id) if winner_id != &"" else "-",
 		"votes": "%d of %d" % [votes_cast, eligible],
+		"abstained": abstained,
 		"turnout": "%.0f%%" % (turnout() * 100.0),
 		"tie_break": tie_break if tie_break != "" else "-",
 		"counts": counts,

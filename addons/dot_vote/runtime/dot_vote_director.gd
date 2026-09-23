@@ -60,7 +60,29 @@ signal changed(id: StringName, result: DotResult)
 signal warning(seconds_left: float)
 signal rocked(voter: StringName, votes: int, needed: int)
 signal extended(seconds: float, rounds: int)
+signal score_limit_changed(limit: int)
 signal nominated(voter: StringName, id: StringName)
+
+## A nomination came off the list — withdrawn, replaced, taken onto a ballot, cleared
+## by a new map, removed by an admin, or its owner left. [param reason] is one of
+## [DotVoteNominations]'s [code]REASON_*[/code].
+signal nomination_removed(voter: StringName, id: StringName, reason: StringName)
+
+## A countdown to a ballot started: [member DotVoteRules.vote_warning_sec], or
+## [member DotVoteRules.runoff_warning_sec] when [param runoff].
+signal countdown_started(seconds: float, runoff: bool)
+
+## One second of that countdown. Fires for every whole second from the first down to
+## 1; the ballot opening is the zero. [b]The signal a HUD counts down from[/b], and
+## what a sound layer plays "three, two, one" on.
+signal countdown_tick(seconds_left: int, runoff: bool)
+
+## A sound cue is due. [param id] is one of the [code]cue_*[/code] settings — a
+## dot-audio id, typically — and is never empty.
+##
+## A signal, not a player: this addon names no audio class and plays nothing, for the
+## same reason [member announce_fn] is a [Callable] rather than a chat manager.
+signal cue(id: StringName)
 
 enum State {
 	## Something is running and no vote is in progress.
@@ -72,6 +94,22 @@ enum State {
 	PENDING,
 	## The source is being asked to change.
 	APPLYING,
+	## Counting down to a ballot (or a runoff) that has not opened yet.
+	COUNTDOWN,
+}
+
+## Whether a player may nominate right now, and if not, why. What
+## [method nomination_state] returns — the question a menu asks before it draws.
+enum NominationState {
+	YES,
+	## Nominations are off, or voting is.
+	DISABLED,
+	## The list is at [member DotVoteRules.nominations_max].
+	FULL,
+	## A ballot is open or about to be; a nomination now would miss it.
+	VOTE_IN_PROGRESS,
+	## What plays next is already decided.
+	VOTE_COMPLETE,
 }
 
 @export_group("Wiring")
@@ -147,6 +185,14 @@ var weight_fn: Callable = Callable()
 ## its HUD rather than in a chat log.
 var announce_fn: Callable = Callable()
 
+## Whether some other vote is on the players' screens right now. Optional.
+##
+## A ballot opened on top of a votekick is two menus fighting for the same number keys,
+## and whichever loses was voted in by accident. While this answers true a vote that is
+## due waits — through the same retry a vote refused by the cooldown takes — rather than
+## being dropped. dot-server's [code]DotVoteManager[/code] is the obvious answer to it.
+var busy_fn: Callable = Callable()
+
 var _current_id: StringName = &""
 var _vote_remaining: float = 0.0
 var _announce_countdown: float = 0.0
@@ -167,6 +213,29 @@ var _vote_due_pending: bool = false
 
 ## The reason the pending vote is due, kept so the retry says the same thing.
 var _vote_due_reason: StringName = DotVoteClock.REASON_MANUAL
+
+## Why the ballot now open (or last closed) was opened. Decides whether it was an early
+## vote, and which of [member DotVoteRules.apply] and [member DotVoteRules.rtv_apply]
+## its winner waits for.
+var _vote_reason: StringName = DotVoteClock.REASON_MANUAL
+
+## The moment the pending change waits for, as a [enum DotVoteRules.Apply].
+##
+## Held per change rather than read from the rules at apply time, because two things
+## now schedule changes with different moments — an end-of-map ballot and a
+## rock-the-vote one, and an admin's [method set_next] — and a change that re-read the
+## rules when it came due would wait for the wrong one.
+var _pending_moment: int = DotVoteRules.Apply.END_OF_ROUND
+
+var _countdown_remaining: float = 0.0
+var _countdown_last: int = 0
+var _countdown_runoff: bool = false
+var _countdown_reason: StringName = DotVoteClock.REASON_MANUAL
+var _runoff_ids: Array[StringName] = []
+
+## Set while [method force_rtv] expires the clock, so a MANUAL trigger — which ignores a
+## player's rock-the-vote — does not also ignore an admin's.
+var _forcing: bool = false
 
 
 func _ready() -> void:
@@ -202,6 +271,13 @@ func _ready() -> void:
 	clock.extended.connect(
 		func(seconds: float, rounds: int) -> void: extended.emit(seconds, rounds)
 	)
+	clock.score_limit_changed.connect(
+		func(limit: int) -> void: score_limit_changed.emit(limit)
+	)
+	nominations.removed.connect(
+		func(voter: StringName, id: StringName, reason: StringName) -> void:
+			nomination_removed.emit(voter, id, reason)
+	)
 
 	if register_service:
 		DotRegistry.register(SERVICE, self)
@@ -230,6 +306,8 @@ func begin(id: StringName) -> void:
 	_pending_id = &""
 	_pending_delay = 0.0
 	_vote_due_pending = false
+	_countdown_remaining = 0.0
+	_runoff_ids.clear()
 	state = State.RUNNING
 
 	ballot.reset()
@@ -264,14 +342,16 @@ func advance(delta: float) -> void:
 	match state:
 		State.VOTING:
 			_advance_vote(delta)
+		State.COUNTDOWN:
+			_advance_countdown(delta)
 		State.PENDING:
 			_pending_delay = maxf(_pending_delay - delta, 0.0)
 
 			if _pending_delay <= 0.0 and _ready_to_apply():
 				_do_change()
 		State.RUNNING:
-			if _vote_due_pending and _cooldown_remaining <= 0.0:
-				var retried := open_vote(_vote_due_reason)
+			if _vote_due_pending and _cooldown_remaining <= 0.0 and not _busy():
+				var retried := start_vote(_vote_due_reason)
 
 				if retried.ok:
 					_vote_due_pending = false
@@ -306,11 +386,20 @@ func _advance_vote(delta: float) -> void:
 func note_round_end() -> bool:
 	var over := clock.note_round_end()
 
-	if state == State.PENDING and rules.apply == DotVoteRules.Apply.END_OF_ROUND:
+	if state == State.PENDING and _pending_moment == DotVoteRules.Apply.END_OF_ROUND:
 		_pending_delay = 0.0
 		_do_change()
 
 	return over
+
+
+## Records the leading score, for [member DotVoteRules.score_limit]. Returns whether
+## that ended the current choice.
+##
+## Call it whenever the leader's score changes — the top player's frags, the leading
+## team's wins. What a score is, is the game's; this only compares it with a number.
+func note_score(score: int) -> bool:
+	return clock.note_score(score)
 
 
 # --- Players ---------------------------------------------------------------
@@ -342,6 +431,17 @@ func _say(line: String) -> void:
 		announce_fn.call(line)
 
 
+func _busy() -> bool:
+	return busy_fn.is_valid() and bool(busy_fn.call())
+
+
+## Emits [signal cue] for a configured cue. An empty id is silence, which is the default
+## for every cue and must stay silent rather than emit an empty id a host then looks up.
+func _cue(id: String) -> void:
+	if id != "":
+		cue.emit(StringName(id))
+
+
 ## Forgets everything one player did. Call when they disconnect.
 ##
 ## [b]Their rock-the-vote goes and their nominations stay[/b], which is not an
@@ -349,8 +449,14 @@ func _say(line: String) -> void:
 ## leaver's makes the map end on the votes of people who left; a nomination is a
 ## request of the server, and somebody who nominated a map and then crashed still
 ## wants it played.
+##
+## [member DotVoteRules.nominations_forget_leavers] reverses the second half, for a
+## server that wants the long-standing map-choosers' behaviour.
 func forget_voter(voter: StringName) -> void:
 	clock.unrock(voter)
+
+	if rules.nominations_forget_leavers:
+		nominations.remove_voter(voter, DotVoteNominations.REASON_LEFT)
 
 	if ballot.open and ballot.withdraw(voter):
 		# Recomputed rather than decremented, so it stays right when several leave at
@@ -392,6 +498,21 @@ func nominate(voter: StringName, id: StringName) -> DotResult:
 	var admin := _is_admin(voter)
 	var bypass := admin and rules.admin_nominations_bypass
 
+	# Refused while a ballot is open or coming, and once the next is decided. A
+	# nomination then is one that cannot reach any ballot — it would be consumed by
+	# nothing, or cleared by the change — and accepting it is telling a player something
+	# happened when nothing will.
+	match nomination_state():
+		NominationState.VOTE_IN_PROGRESS:
+			return DotResult.fail(
+				DotError.CODE_STATE, "A vote is already running; vote in that instead."
+			)
+		NominationState.VOTE_COMPLETE:
+			return DotResult.fail(
+				DotError.CODE_STATE,
+				"What plays next is already decided (%s)." % _name_of(_pending_id)
+			)
+
 	if not choice.available_for(player_count(), true) and not bypass:
 		return DotResult.fail(
 			DotError.CODE_STATE,
@@ -425,7 +546,46 @@ func nominate(voter: StringName, id: StringName) -> DotResult:
 
 
 func withdraw_nomination(voter: StringName, id: StringName) -> bool:
-	return nominations.remove(voter, id)
+	return nominations.remove(voter, id, DotVoteNominations.REASON_WITHDRAWN)
+
+
+## Puts [param id] on the next ballot whatever the caps, the cooldown or the switches
+## say. An admin's command; the caller checks who is asking.
+##
+## It takes none of the places reserved for players' nominations — see
+## [method DotVoteNominations.forced_ids] — so an admin adding a map does not quietly
+## cost the players one of theirs.
+func force_nominate(id: StringName, by: StringName = &"admin") -> DotResult:
+	if source == null:
+		return DotResult.fail(DotError.CODE_STATE, "No source.")
+
+	var choice := source.find(id)
+
+	if choice == null:
+		return DotResult.fail(
+			DotError.CODE_INVALID, "There is nothing called '%s'." % id, _nearest(id)
+		)
+
+	var added := nominations.add(by, id, true, true)
+
+	if added.ok:
+		nominated.emit(by, id)
+		_say("%s will be on the next vote." % ballot_name(choice))
+		DotLog.info(CHANNEL, "forced onto the next ballot", {
+			"id": String(id), "by": String(by)
+		})
+
+	return added
+
+
+## Removes every nomination of [param id]. Returns how many there were.
+func remove_nomination(id: StringName) -> int:
+	return nominations.remove_id(id, DotVoteNominations.REASON_ADMIN)
+
+
+## Removes everything [param voter] nominated. Returns how many there were.
+func remove_nominations_by(voter: StringName) -> int:
+	return nominations.remove_voter(voter, DotVoteNominations.REASON_ADMIN)
 
 
 func _nearest(id: StringName) -> String:
@@ -451,7 +611,16 @@ func rock_the_vote(voter: StringName) -> DotResult:
 	if not rules.enabled:
 		return DotResult.fail(DotError.CODE_UNSUPPORTED, "Voting is turned off.")
 
-	if state != State.RUNNING:
+	if state == State.PENDING:
+		# The next choice is decided and waiting for its moment. Rocking the vote now is
+		# "we are done with this one", and the answer to "what next" already exists —
+		# so it either brings that forward or is refused, and never opens another ballot.
+		if rules.rtv_after_decided == DotVoteRules.RtvAfterDecided.DENY:
+			return DotResult.fail(
+				DotError.CODE_STATE,
+				"What plays next is already decided (%s)." % _name_of(_pending_id)
+			)
+	elif state != State.RUNNING:
 		return DotResult.fail(
 			DotError.CODE_STATE, "A vote is already on the way."
 		)
@@ -468,8 +637,49 @@ func rock_the_vote(voter: StringName) -> DotResult:
 
 # --- Voting ----------------------------------------------------------------
 
-## Opens a ballot now.
-func open_vote(reason: StringName = DotVoteClock.REASON_MANUAL) -> DotResult:
+## Starts a vote the way the rules want it started: with the
+## [member DotVoteRules.vote_warning_sec] countdown first, or at once when there is none.
+##
+## [b]What everything that is not a test should call.[/b] [method open_vote] opens a
+## ballot this instant, which is right for a client mirroring a server's ballot and for
+## a suite, and wrong for a server whose operator asked for fifteen seconds of warning.
+##
+## [param force] is an admin's "vote now": it replaces a change already decided rather
+## than being refused by it.
+func start_vote(
+	reason: StringName = DotVoteClock.REASON_MANUAL,
+	force: bool = false
+) -> DotResult:
+	var ready := _can_open()
+
+	if not ready.ok:
+		return ready
+
+	if state == State.COUNTDOWN:
+		return DotResult.fail(DotError.CODE_STATE, "A vote is about to start.")
+
+	if state == State.PENDING:
+		if not force:
+			return DotResult.fail(
+				DotError.CODE_STATE,
+				"What plays next is already decided (%s)." % _name_of(_pending_id)
+			)
+
+		DotLog.info(CHANNEL, "a decided change was replaced by a new vote", {
+			"was": String(_pending_id)
+		})
+		_pending_id = &""
+		state = State.RUNNING
+
+	if rules.vote_warning_sec > 0.0:
+		_begin_countdown(rules.vote_warning_sec, false, reason)
+		return DotResult.success(rules.vote_warning_sec)
+
+	return open_vote(reason)
+
+
+## Why a ballot could not open right now, or success.
+func _can_open() -> DotResult:
 	if not rules.enabled:
 		return DotResult.fail(DotError.CODE_UNSUPPORTED, "Voting is turned off.")
 
@@ -494,15 +704,48 @@ func open_vote(reason: StringName = DotVoteClock.REASON_MANUAL) -> DotResult:
 			"Another vote can start in %ds." % int(ceil(_cooldown_remaining))
 		)
 
-	var options := build_options(players)
+	if _busy():
+		return DotResult.fail(
+			DotError.CODE_STATE, "Another vote is on screen; this one will follow it."
+		)
+
+	return DotResult.success(true)
+
+
+## Opens a ballot now, with no countdown.
+##
+## [param only] puts exactly those ids on the ballot instead of filling it — an admin's
+## hand-picked shortlist. Ids the source does not know are dropped with a warning
+## rather than refusing the whole ballot.
+func open_vote(
+	reason: StringName = DotVoteClock.REASON_MANUAL,
+	only: Array[StringName] = []
+) -> DotResult:
+	var ready := _can_open()
+
+	if not ready.ok:
+		return ready
+
+	var players := player_count()
+	var options: Array[DotVoteChoice] = (
+		build_options(players) if only.is_empty() else _choices_for(only)
+	)
+
+	if rules.shuffle_ballot:
+		options = _shuffle(options)
+
+	ballot.extend_available = clock.can_extend()
+	ballot.early = reason == DotVoteClock.REASON_RTV
+
 	var started := ballot.begin(options, maxi(_eligible_count(), 1))
 
 	if not started.ok:
 		return started
 
-	nominations.clear()
+	nominations.clear(DotVoteNominations.REASON_BALLOT)
 
 	state = State.VOTING
+	_vote_reason = reason
 	_vote_due_pending = false
 	_vote_remaining = rules.vote_duration_sec
 	_announce_countdown = rules.announce_interval_sec
@@ -510,18 +753,125 @@ func open_vote(reason: StringName = DotVoteClock.REASON_MANUAL) -> DotResult:
 	var names := PackedStringArray()
 
 	for choice in options:
-		names.append(choice.name_or_id())
+		names.append(ballot_name(choice))
 
 	DotLog.info(CHANNEL, "vote opened", {
 		"reason": String(reason), "options": names.size(), "eligible": ballot.eligible
 	})
 
 	_say("Vote: %s (%ds)" % [", ".join(names), int(rules.vote_duration_sec)])
+	_cue(rules.cue_vote_start)
 
 	vote_opened.emit(ballot.option_ids(), _vote_remaining)
 
 	return DotResult.success(options)
 
+
+func _choices_for(ids: Array[StringName]) -> Array[DotVoteChoice]:
+	var out: Array[DotVoteChoice] = []
+
+	for id in ids:
+		var choice := source.find(id) if source != null else null
+
+		if choice == null:
+			DotLog.warn(CHANNEL, "a hand-picked option is not in the source", {
+				"id": String(id)
+			})
+			continue
+
+		out.append(choice)
+
+	return out
+
+
+# --- The countdown ---------------------------------------------------------
+
+func _begin_countdown(seconds: float, runoff: bool, reason: StringName) -> void:
+	state = State.COUNTDOWN
+	_countdown_remaining = seconds
+	_countdown_runoff = runoff
+	_countdown_reason = reason
+	_countdown_last = int(ceil(seconds))
+
+	DotLog.info(CHANNEL, "counting down to a ballot", {
+		"seconds": seconds, "runoff": runoff, "reason": String(reason)
+	})
+
+	countdown_started.emit(seconds, runoff)
+	_cue(rules.cue_runoff_warning if runoff else rules.cue_warning)
+	_say(
+		"A runoff vote starts in %ds." % _countdown_last if runoff
+		else "A vote for what plays next starts in %ds." % _countdown_last
+	)
+	_tick(_countdown_last, false)
+
+
+func _advance_countdown(delta: float) -> void:
+	_countdown_remaining -= delta
+
+	var now := maxi(int(ceil(_countdown_remaining)), 0)
+
+	# Every whole second crossed gets its tick, even when one advance crosses several —
+	# a server that stalled for two seconds still says "3" before "1", and a sound layer
+	# playing a countdown does not skip a number.
+	while _countdown_last > now:
+		_countdown_last -= 1
+
+		if _countdown_last >= 1:
+			_tick(_countdown_last, rules.announce_countdown_every_sec)
+
+	if _countdown_remaining > 0.0:
+		return
+
+	state = State.RUNNING
+
+	if _countdown_runoff:
+		_open_runoff()
+		return
+
+	var opened := open_vote(_countdown_reason)
+
+	if not opened.ok:
+		# The same retry a vote refused by the cooldown takes. See _vote_due_pending.
+		_vote_due_pending = true
+		_vote_due_reason = _countdown_reason
+
+		DotLog.warn(CHANNEL, "the counted-down vote could not open; will retry", {
+			"why": opened.error.message
+		})
+
+
+func _tick(seconds_left: int, say: bool) -> void:
+	countdown_tick.emit(seconds_left, _countdown_runoff)
+	_cue(rules.countdown_cue_id(seconds_left))
+
+	if say:
+		_say("%d…" % seconds_left)
+
+
+func is_counting_down() -> bool:
+	return state == State.COUNTDOWN
+
+
+func countdown_remaining() -> float:
+	return maxf(_countdown_remaining, 0.0) if state == State.COUNTDOWN else 0.0
+
+
+## Cancels a countdown, leaving the server running. An admin's "not now".
+func cancel_countdown() -> bool:
+	if state != State.COUNTDOWN:
+		return false
+
+	state = State.RUNNING
+	_countdown_remaining = 0.0
+	_runoff_ids.clear()
+
+	_say("The vote was called off.")
+
+	return true
+
+
+# --- Casting and closing ---------------------------------------------------
 
 ## Records a vote. [param choices] is in preference order; one entry is the usual case.
 func cast_vote(voter: StringName, choices: Array[StringName]) -> DotResult:
@@ -553,26 +903,27 @@ func close_vote() -> DotVoteResult:
 
 	var result := ballot.resolve()
 
+	_decide_no_votes(result)
+
 	_cooldown_remaining = rules.vote_cooldown_sec
 
 	DotLog.info(CHANNEL, "vote closed", result.describe())
 	_say(result.summary)
+	_cue(rules.cue_vote_end)
 
 	vote_closed.emit(result)
 
+	var moment := _moment_for(_vote_reason)
+
 	match result.outcome:
 		DotVoteResult.Outcome.RUNOFF:
-			var again := ballot.begin_runoff(result.runoff_ids)
-
-			if again.ok:
-				_vote_remaining = rules.vote_duration_sec
-				_announce_countdown = rules.announce_interval_sec
-				vote_opened.emit(ballot.option_ids(), _vote_remaining)
+			if rules.runoff_warning_sec > 0.0:
+				_runoff_ids = result.runoff_ids.duplicate()
+				_begin_countdown(rules.runoff_warning_sec, true, _vote_reason)
 				return result
 
-			# A runoff that cannot start is not a reason to leave the server in VOTING
-			# for ever. Falling back to the leader is the only answer that terminates.
-			state = State.RUNNING
+			_runoff_ids = result.runoff_ids.duplicate()
+			_open_runoff()
 			return result
 
 		DotVoteResult.Outcome.EXTEND:
@@ -581,31 +932,108 @@ func close_vote() -> DotVoteResult:
 			return result
 
 		DotVoteResult.Outcome.KEEP:
-			state = State.RUNNING
-			# The clock is restarted rather than left expired, or the next tick would
-			# expire again and open another ballot immediately.
-			clock.start(source.find(_current_id) if source != null else null)
+			_carry_on()
 			return result
 
 		DotVoteResult.Outcome.NO_QUORUM:
-			_after_no_quorum(result)
+			_after_no_quorum(result, moment)
 			return result
 
 		DotVoteResult.Outcome.EMPTY:
-			state = State.RUNNING
-			clock.start(source.find(_current_id) if source != null else null)
+			_carry_on()
 			return result
 
 		_:
-			_schedule_change(result.winner_id)
+			_schedule_change(result.winner_id, moment)
 			return result
 
 
-func _after_no_quorum(result: DotVoteResult) -> void:
+func _open_runoff() -> void:
+	var again := ballot.begin_runoff(_runoff_ids)
+	_runoff_ids.clear()
+
+	if again.ok:
+		state = State.VOTING
+		_vote_remaining = rules.vote_duration_sec
+		_announce_countdown = rules.announce_interval_sec
+		_cue(rules.cue_vote_start)
+		vote_opened.emit(ballot.option_ids(), _vote_remaining)
+		return
+
+	# A runoff that cannot start is not a reason to leave the server in VOTING for ever.
+	state = State.RUNNING
+
+
+## The moment a winner of a ballot opened for [param reason] waits for.
+func _moment_for(reason: StringName) -> int:
+	if reason == DotVoteClock.REASON_RTV:
+		return rules.rtv_apply
+
+	return rules.apply
+
+
+## Nothing changes: carry on with what is running.
+##
+## [b]Two different "carry on"s, and using the wrong one is a real bug.[/b] After an
+## end-of-map ballot the clock is expired or nearly so, and it restarts — or the next
+## tick expires it again and opens another ballot at once. After a rock-the-vote ballot
+## the clock still had time on it; restarting it would hand an unpopular map a fresh
+## limit for having been voted on, so it resumes where it stopped, and rocking the vote
+## waits out [member DotVoteRules.rtv_interval_sec] before it can pass again.
+func _carry_on() -> void:
+	state = State.RUNNING
+
+	if _vote_reason == DotVoteClock.REASON_RTV:
+		clock.resume()
+		clock.block_rtv_for(rules.rtv_interval_sec)
+		return
+
+	clock.start(source.find(_current_id) if source != null else null)
+
+
+## Decides a ballot nobody voted in, per [member DotVoteRules.on_no_votes].
+##
+## Done to the result BEFORE it is announced, so [signal vote_closed] carries what
+## actually happens rather than "nobody voted" followed by a change nobody was told
+## about.
+func _decide_no_votes(result: DotVoteResult) -> void:
+	if result.outcome != DotVoteResult.Outcome.EMPTY or ballot.options.is_empty():
+		return
+
+	if ballot.real_voter_count() > 0:
+		return
+
+	var picked: StringName = &""
+	var how := ""
+
+	match rules.on_no_votes:
+		DotVoteRules.NoVotes.RANDOM:
+			# Only the ballot's real options: never "extend", which the long-standing
+			# map-choosers also refuse to draw — a server nobody answered does not get
+			# more time for it.
+			var rng := _rng()
+			picked = ballot.options[rng.randi_range(0, ballot.options.size() - 1)].id
+			how = "drawn, because nobody voted"
+		DotVoteRules.NoVotes.ROTATION:
+			picked = _next_in_rotation()
+			how = "next in rotation, because nobody voted"
+		_:
+			return
+
+	if picked == &"":
+		return
+
+	result.outcome = DotVoteResult.Outcome.WINNER
+	result.winner_id = picked
+	result.winner = source.find(picked) if source != null else null
+	result.tie_break = how
+	result.summary = "Nobody voted; %s is next (%s)." % [_name_of(picked), how]
+
+
+func _after_no_quorum(result: DotVoteResult, moment: int) -> void:
 	match rules.on_no_quorum:
 		DotVoteRules.NoQuorum.KEEP:
-			state = State.RUNNING
-			clock.start(source.find(_current_id) if source != null else null)
+			_carry_on()
 
 		DotVoteRules.NoQuorum.ROTATION:
 			# The source's own order decides. Not the ballot's leader: the point of this
@@ -613,19 +1041,21 @@ func _after_no_quorum(result: DotVoteResult) -> void:
 			var next := _next_in_rotation()
 
 			if next == &"":
-				state = State.RUNNING
-				clock.start(source.find(_current_id) if source != null else null)
+				_carry_on()
 				return
 
-			_schedule_change(next)
+			_schedule_change(next, moment)
 
 		_:
-			if result.winner_id == &"" or result.winner_id == DotVoteBallot.EXTEND:
-				state = State.RUNNING
-				clock.start(source.find(_current_id) if source != null else null)
+			if (
+				result.winner_id == &""
+				or result.winner_id == DotVoteBallot.EXTEND
+				or result.winner_id == DotVoteBallot.KEEP
+			):
+				_carry_on()
 				return
 
-			_schedule_change(result.winner_id)
+			_schedule_change(result.winner_id, moment)
 
 
 func _extend_now() -> void:
@@ -633,9 +1063,11 @@ func _extend_now() -> void:
 		_say("Extended. %s." % clock.timeleft_line())
 		return
 
-	# Out of extends and the players voted for one anyway. Left running rather than
-	# silently changing: the clock is already expired, the next expiry has nothing to
-	# fire, and the honest thing is to say so and let the next vote decide.
+	# Out of extends and the players voted for one anyway. A ballot no longer offers
+	# "extend" once it cannot happen (DotVoteBallot.extend_available), so this is reached
+	# only by a host casting EXTEND by hand. Left running rather than silently changing:
+	# the clock is already expired, and the honest thing is to say so and let the next
+	# vote decide.
 	_say("This cannot be extended again.")
 	clock.start(source.find(_current_id) if source != null else null)
 
@@ -651,14 +1083,14 @@ func vote_seconds_remaining() -> float:
 # --- Extending -------------------------------------------------------------
 
 ## Extends without a vote. For an admin command.
-func extend(seconds: float = -1.0, rounds: int = -1) -> DotResult:
+func extend(seconds: float = -1.0, rounds: int = -1, score: int = -1) -> DotResult:
 	if not clock.can_extend():
 		return DotResult.fail(
 			DotError.CODE_STATE,
 			"This has already been extended %d times." % clock.extends_used
 		)
 
-	clock.extend(seconds, rounds)
+	clock.extend(seconds, rounds, score)
 	_say("Extended. %s." % clock.timeleft_line())
 
 	return DotResult.success(clock.timeleft_line())
@@ -666,22 +1098,33 @@ func extend(seconds: float = -1.0, rounds: int = -1) -> DotResult:
 
 # --- Changing --------------------------------------------------------------
 
-func _schedule_change(id: StringName) -> void:
+func _schedule_change(id: StringName, moment: int) -> void:
 	if id == &"" or id == DotVoteBallot.EXTEND or id == DotVoteBallot.KEEP:
 		state = State.RUNNING
 		return
 
 	_pending_id = id
+	_pending_moment = moment
 	_pending_delay = rules.apply_delay_sec
 	state = State.PENDING
+
+	# A rock-the-vote stopped the clock. A winner that waits for the end of the round or
+	# of the clock needs that clock running again, or the moment it waits for never
+	# comes and the map it replaced plays for ever.
+	if (
+		_vote_reason == DotVoteClock.REASON_RTV
+		and moment != DotVoteRules.Apply.IMMEDIATE
+		and clock.is_expired()
+	):
+		clock.resume()
 
 	if _ready_to_apply() and _pending_delay <= 0.0:
 		_do_change()
 
 
-## Whether the moment the rules asked for has arrived.
+## Whether the moment the pending change waits for has arrived.
 func _ready_to_apply() -> bool:
-	match rules.apply:
+	match _pending_moment:
 		DotVoteRules.Apply.END_OF_ROUND:
 			# Driven by note_round_end rather than polled. A round-based game whose
 			# round never ends keeps its winner pending, which is right: the change was
@@ -703,6 +1146,91 @@ func apply_pending() -> DotResult:
 
 func pending_id() -> StringName:
 	return _pending_id
+
+
+## Sets what plays next by hand, as though a vote had chosen it. An admin's command.
+##
+## It takes effect when the clock runs out — the end of the map, not now: an admin who
+## wants now has [code]changelevel[/code] — and it counts as the end-of-map vote having
+## finished, so no ballot opens in the meantime. Rocking the vote after it follows
+## [member DotVoteRules.rtv_after_decided], exactly as it would after a vote.
+func set_next(id: StringName) -> DotResult:
+	if source == null:
+		return DotResult.fail(DotError.CODE_STATE, "No source.")
+
+	var choice := source.find(id)
+
+	if choice == null:
+		return DotResult.fail(
+			DotError.CODE_INVALID, "There is nothing called '%s'." % id, _nearest(id)
+		)
+
+	if state == State.VOTING:
+		return DotResult.fail(
+			DotError.CODE_STATE,
+			"A vote is running.",
+			"close it first, or let it finish"
+		)
+
+	if state == State.APPLYING:
+		return DotResult.fail(DotError.CODE_STATE, "A change is already under way.")
+
+	if state == State.COUNTDOWN:
+		state = State.RUNNING
+		_countdown_remaining = 0.0
+		_runoff_ids.clear()
+
+	_vote_due_pending = false
+	_vote_reason = DotVoteClock.REASON_MANUAL
+	_schedule_change(id, DotVoteRules.Apply.END_OF_TIME)
+
+	DotLog.info(CHANNEL, "next set by hand", {"id": String(id)})
+	_say("%s is next." % ballot_name(choice))
+
+	return DotResult.success(choice)
+
+
+## Rocks the vote on everybody's behalf. An admin's command.
+##
+## With the next choice already decided it brings that forward — now, after the apply
+## delay — whatever [member DotVoteRules.rtv_after_decided] says, because an admin is not
+## a player being refused a second say. Otherwise it is exactly a rock-the-vote passing.
+func force_rtv() -> DotResult:
+	if not rules.enabled:
+		return DotResult.fail(DotError.CODE_UNSUPPORTED, "Voting is turned off.")
+
+	if state == State.PENDING:
+		_pending_moment = DotVoteRules.Apply.IMMEDIATE
+		_pending_delay = rules.apply_delay_sec
+		_say("Changing to %s." % _name_of(_pending_id))
+		return DotResult.success(_pending_id)
+
+	if state != State.RUNNING:
+		return DotResult.fail(DotError.CODE_STATE, "A vote is already on the way.")
+
+	if clock.is_expired():
+		# Nothing left to expire — a vote-only server, or a limit that ran out with no
+		# ballot. Open one as a rock-the-vote directly.
+		return start_vote(DotVoteClock.REASON_RTV, true)
+
+	_forcing = true
+	clock.expire_now(DotVoteClock.REASON_RTV)
+	_forcing = false
+
+	return DotResult.success(true)
+
+
+## Re-reads the source, for a list an operator edited on disk.
+func reload() -> DotResult:
+	if source == null:
+		return DotResult.fail(DotError.CODE_STATE, "No source.")
+
+	var reloaded := source.reload()
+
+	if reloaded.ok:
+		DotLog.info(CHANNEL, "choices reloaded", {"count": source.choices().size()})
+
+	return reloaded
 
 
 func _do_change() -> DotResult:
@@ -819,11 +1347,24 @@ func build_options(players: int) -> Array[DotVoteChoice]:
 	if source == null:
 		return out
 
+	# An admin's forced additions first, and outside the places reserved for players.
+	for id in nominations.forced_ids():
+		if out.size() >= rules.max_options:
+			break
+
+		var forced := source.find(id)
+
+		if forced != null and not taken.has(id):
+			out.append(forced)
+			taken[id] = true
+
 	var nominated := nominations.ordered_ids()
 	var slots := mini(rules.nomination_slots, rules.max_options)
 
+	var players_placed := 0
+
 	for id in nominated:
-		if out.size() >= slots:
+		if players_placed >= slots or out.size() >= rules.max_options:
 			break
 
 		var choice := source.find(id)
@@ -833,6 +1374,7 @@ func build_options(players: int) -> Array[DotVoteChoice]:
 
 		out.append(choice)
 		taken[id] = true
+		players_placed += 1
 
 	var pool := _eligible_pool(players, taken)
 
@@ -998,17 +1540,23 @@ func _on_vote_due(reason: StringName) -> void:
 	if reason == DotVoteClock.REASON_RTV:
 		match rules.rtv_outcome:
 			DotVoteRules.RtvOutcome.CHANGE_NOW:
-				_schedule_change(_next_in_rotation())
+				_vote_reason = reason
+				_schedule_change(_next_in_rotation(), DotVoteRules.Apply.IMMEDIATE)
 				return
 			DotVoteRules.RtvOutcome.END_CURRENT:
 				return
 			_:
 				pass
 
-	if rules.trigger == DotVoteRules.Trigger.MANUAL:
+	if rules.trigger == DotVoteRules.Trigger.MANUAL and not _forcing:
 		return
 
-	var opened := open_vote(reason)
+	# A limit running out asks the players only when the end-of-map vote is on. With it
+	# off the limit still ends the map, and _on_expired hands it to the rotation.
+	if reason != DotVoteClock.REASON_RTV and not end_vote_enabled():
+		return
+
+	var opened := start_vote(reason)
 
 	if not opened.ok:
 		# Remembered rather than logged and dropped. See _vote_due_pending.
@@ -1021,23 +1569,193 @@ func _on_vote_due(reason: StringName) -> void:
 
 
 func _on_expired(reason: StringName) -> void:
-	# A vote already decided this and is waiting for the clock; this IS that moment.
-	if state == State.PENDING and rules.apply == DotVoteRules.Apply.END_OF_TIME:
-		_pending_delay = 0.0
-		_do_change()
+	if state == State.PENDING:
+		# A vote already decided this and is waiting for the clock; this IS that moment.
+		# Or the players rocked the vote after it was decided, and asked for it now.
+		if _pending_moment == DotVoteRules.Apply.END_OF_TIME or (
+			reason == DotVoteClock.REASON_RTV
+			and rules.rtv_after_decided == DotVoteRules.RtvAfterDecided.CHANGE_NOW
+		):
+			_pending_delay = 0.0
+			_do_change()
 		return
 
 	if state != State.RUNNING:
 		return
 
-	# Nothing was voted on — RTV_ONLY with rtv_outcome END_CURRENT, or a trigger of
-	# MANUAL — so the rotation decides. A server whose limit expired and did nothing at
-	# all is the failure this addon exists to prevent.
-	if rules.trigger == DotVoteRules.Trigger.RTV_ONLY or (
+	# Nothing was voted on — RTV_ONLY, the end-of-map vote turned off, or rtv_outcome
+	# END_CURRENT — so the rotation decides. A server whose limit expired and did nothing
+	# at all is the failure this addon exists to prevent. MANUAL is the one trigger left
+	# alone: its host decides for itself.
+	var unasked := (
+		reason != DotVoteClock.REASON_RTV
+		and not end_vote_enabled()
+		and rules.trigger != DotVoteRules.Trigger.MANUAL
+	)
+
+	if unasked or (
 		rules.rtv_outcome == DotVoteRules.RtvOutcome.END_CURRENT
 		and reason == DotVoteClock.REASON_RTV
 	):
-		_schedule_change(_next_in_rotation())
+		_vote_reason = reason
+		_schedule_change(_next_in_rotation(), rules.apply)
+
+
+# --- Asking ----------------------------------------------------------------
+#
+# The questions the long-standing community map-choosers answer for other plugins, so a
+# HUD, a menu or another addon can ask rather than duplicate the state.
+
+## Whether a limit running out opens a ballot on this server.
+func end_vote_enabled() -> bool:
+	return (
+		rules != null
+		and rules.enabled
+		and rules.end_vote
+		and rules.trigger != DotVoteRules.Trigger.RTV_ONLY
+		and rules.trigger != DotVoteRules.Trigger.MANUAL
+	)
+
+
+## Whether what plays next is already decided — by a ballot or by an admin — and is
+## waiting for its moment.
+func has_end_vote_finished() -> bool:
+	return state == State.PENDING and _pending_id != &""
+
+
+## Whether a ballot could be started right now.
+func can_start_vote() -> bool:
+	if rules == null or not rules.enabled or source == null:
+		return false
+
+	if state != State.RUNNING and state != State.PENDING:
+		return false
+
+	return not _busy() and not _vote_due_pending
+
+
+## Whether a player may nominate right now, and if not, why.
+func nomination_state() -> NominationState:
+	if rules == null or not rules.enabled or not rules.nominations_enabled:
+		return NominationState.DISABLED
+
+	if state == State.VOTING or state == State.COUNTDOWN:
+		return NominationState.VOTE_IN_PROGRESS
+
+	if state == State.PENDING or state == State.APPLYING:
+		return NominationState.VOTE_COMPLETE
+
+	if rules.nominations_max > 0 and nominations.size() >= rules.nominations_max:
+		return NominationState.FULL
+
+	return NominationState.YES
+
+
+func can_nominate() -> bool:
+	return nomination_state() == NominationState.YES
+
+
+## Everything a player could nominate right now, in the source's order.
+##
+## [b]The list a nomination menu draws[/b] — so it leaves out exactly what
+## [method nominate] would refuse: the disabled, the wrong player count, what is
+## running, and what is on cooldown, each unless the rules allow it.
+func nominatable_ids() -> Array[StringName]:
+	var out: Array[StringName] = []
+
+	if source == null:
+		return out
+
+	var players := player_count()
+
+	for choice in source.choices():
+		if not choice.enabled or not choice.available_for(players, true):
+			continue
+
+		if choice.id == _current_id and not rules.nominate_current_allowed:
+			continue
+
+		if not rules.nominate_on_cooldown_allowed and history.on_cooldown(
+			choice.id, 0, -1.0, choice
+		):
+			continue
+
+		out.append(choice.id)
+
+	return out
+
+
+## What is kept off a ballot for having been played recently, most recent first.
+func excluded_ids() -> Array[StringName]:
+	var out: Array[StringName] = []
+
+	if source == null:
+		return out
+
+	var pool := source.choices().size()
+
+	for id in history.played:
+		if out.has(id):
+			continue
+
+		if history.on_cooldown(id, pool, -1.0, source.find(id)):
+			out.append(id)
+
+	return out
+
+
+## Nominated ids, in order, forced ones first.
+func nominated_ids() -> Array[StringName]:
+	var out := nominations.forced_ids()
+
+	for id in nominations.ordered_ids():
+		if not out.has(id):
+			out.append(id)
+
+	return out
+
+
+## Every nomination with who made it, as [code]{id, voter, admin, forced}[/code].
+func nominated_list() -> Array[Dictionary]:
+	return nominations.list()
+
+
+## Whether [param id] is one of the server's own rather than a custom choice.
+## Unknown ids are not official.
+func is_official(id: StringName) -> bool:
+	var choice := source.find(id) if source != null else null
+	return choice != null and choice.official
+
+
+## A choice's name as a ballot shows it, marked when it is unofficial.
+func ballot_name(choice: DotVoteChoice) -> String:
+	if choice == null:
+		return "-"
+
+	return rules.marked_name(choice.name_or_id(), choice.official)
+
+
+## The name a player sees for an id, pseudo-options included.
+func option_label(id: StringName) -> String:
+	match id:
+		DotVoteBallot.EXTEND:
+			return "Extend"
+		DotVoteBallot.KEEP:
+			return "Don't change"
+		DotVoteBallot.ABSTAIN:
+			return "No vote"
+
+	var choice := ballot.find_option(id)
+
+	if choice == null and source != null:
+		choice = source.find(id)
+
+	return ballot_name(choice) if choice != null else String(id)
+
+
+func _name_of(id: StringName) -> String:
+	var choice := source.find(id) if source != null else null
+	return choice.name_or_id() if choice != null else String(id)
 
 
 # --- Reporting -------------------------------------------------------------
@@ -1053,6 +1771,11 @@ func describe_lines() -> PackedStringArray:
 	])
 	out.append("nominated  %d" % nominations.size())
 
+	if state == State.COUNTDOWN:
+		out.append("countdown  %ds to a %s" % [
+			int(ceil(_countdown_remaining)), "runoff" if _countdown_runoff else "vote"
+		])
+
 	if state == State.VOTING:
 		out.append("vote       %ds left, %d of %d voted" % [
 			int(_vote_remaining), ballot.voter_count(), ballot.eligible
@@ -1062,7 +1785,12 @@ func describe_lines() -> PackedStringArray:
 			out.append("  %-20s %s" % [entry[0], entry[1]])
 
 	if _pending_id != &"":
-		out.append("pending    %s in %ds" % [String(_pending_id), int(_pending_delay)])
+		out.append("pending    %s, at %s" % [
+			String(_pending_id),
+			str(DotVoteRules.Apply.keys()[_pending_moment]).to_lower(),
+		])
+
+	out.append("end vote   %s" % ("on" if end_vote_enabled() else "off"))
 
 	if _vote_due_pending:
 		out.append("due        a vote is owed and could not be opened yet")
@@ -1089,6 +1817,8 @@ func describe() -> Dictionary:
 		"clock": clock.describe(),
 		"ballot": ballot.describe(),
 		"nominations": nominations.size(),
+		"end_vote": end_vote_enabled(),
+		"pending": String(_pending_id) if _pending_id != &"" else "-",
 		"history": history.describe(),
 		"source": source.describe() if source != null else {},
 	}

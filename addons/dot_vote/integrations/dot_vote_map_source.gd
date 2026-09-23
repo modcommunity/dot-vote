@@ -165,6 +165,12 @@ func _apply_meta(choice: DotVoteChoice, raw: Variant) -> void:
 	if settings.has("enabled"):
 		choice.enabled = bool(settings["enabled"])
 
+	# Whether this is one of the server's own. Read from the thing's metadata rather than
+	# from a list of official ids beside it, for this file's usual reason: a second list
+	# keyed on ids is a list that goes stale the first time something is renamed.
+	if settings.has("official"):
+		choice.official = bool(settings["official"])
+
 
 func current_id() -> StringName:
 	if session == null:

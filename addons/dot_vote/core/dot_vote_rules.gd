@@ -41,6 +41,10 @@ enum Trigger {
 	RTV_ONLY,
 	## Only when the host asks. For a game that decides for itself.
 	MANUAL,
+	## When the leading score reaches [member score_limit] (or [member vote_lead_score]
+	## before it does). A frag limit, a team win limit, a points target — whatever the
+	## host feeds [method DotVoteDirector.note_score].
+	SCORE_LIMIT,
 }
 
 ## How the ballot's non-nominated places are filled.
@@ -132,12 +136,45 @@ enum RtvOutcome {
 	END_CURRENT,
 }
 
+## What happens when a ballot closes with nobody having voted for anything.
+enum NoVotes {
+	## Stay where we are. An empty server changing map for nobody is waste.
+	KEEP,
+	## Draw one of the ballot's real options, never extend or keep. The long-standing
+	## community map-choosers' default: a server that nobody answered still moves on.
+	RANDOM,
+	## Ignore the ballot and let the source's own order decide.
+	ROTATION,
+}
+
+## What rocking the vote does once the next choice has already been decided.
+enum RtvAfterDecided {
+	## A passed rock-the-vote changes to what was decided, now. The players have said
+	## they are done with this one and the question of what is next is already answered.
+	CHANGE_NOW,
+	## Refused. What was decided happens when it was going to.
+	DENY,
+}
+
 @export_group("Trigger")
 
 ## The master switch. Off means nothing here runs and nothing here complains.
 @export var enabled: bool = true
 
 @export var trigger: Trigger = Trigger.TIME_LIMIT
+
+## Whether a limit running out — time, rounds or score — opens a ballot on its own.
+##
+## [b]The switch a server owner is looking for when they ask for "an end-of-map
+## vote".[/b] Off, the limits still end the map, and what plays next is whatever an
+## admin set with [code]setnextmap[/code], a rock-the-vote decided, or the source's own
+## rotation — the same fallback a server with no vote at all has. On is the default
+## because a limit nobody is asked about is a server that changes map under people.
+##
+## Separate from [member trigger] rather than another entry in it, because it is
+## orthogonal: a time limit, a round limit and a score limit each either ask the
+## players or do not, and [constant Trigger.RTV_ONLY] is exactly "off" for all three.
+@export var end_vote: bool = true
 
 ## Seconds before the clock expires that the ballot opens.
 ##
@@ -147,9 +184,40 @@ enum RtvOutcome {
 ## exactly on time. 0 opens it at expiry.
 @export_range(0.0, 900.0, 5.0) var vote_lead_sec: float = 120.0
 
+## The ballot opens when this fraction of the time limit is left. 0 uses
+## [member vote_lead_sec] instead.
+##
+## For a server whose maps run anywhere from ten minutes to an hour: a fixed two-minute
+## lead is most of a short map's last act and nothing on a long one, and "when a third
+## is left" scales with each. Measured against the limit [i]as extended[/i], so an
+## extended map is asked again at the same point of its new length.
+@export_range(0.0, 0.95, 0.05) var vote_lead_fraction: float = 0.0
+
 ## Rounds before the round limit that the ballot opens. The same idea, counted in
 ## rounds for a game whose rounds are the clock.
 @export_range(0, 16, 1) var vote_lead_rounds: int = 1
+
+## Seconds of warning before a ballot opens, counted down out loud. 0 opens it at once.
+##
+## [b]A ballot that appears in the middle of a fight is a ballot most people close
+## without reading.[/b] A countdown gives them fifteen seconds to get somewhere they can
+## look at it, and it is what [signal DotVoteDirector.countdown_tick] and the countdown
+## cue exist for.
+@export_range(0.0, 60.0, 1.0) var vote_warning_sec: float = 0.0
+
+## Seconds of warning before a runoff ballot opens. 0 opens it at once.
+##
+## Shorter than [member vote_warning_sec] as a rule: everybody has just voted, they are
+## already looking.
+@export_range(0.0, 30.0, 1.0) var runoff_warning_sec: float = 0.0
+
+## Whether every second of a countdown is announced, or only its start.
+##
+## Off, because [member DotVoteDirector.announce_fn] is usually chat, and fifteen chat
+## lines in fifteen seconds bury everything else anybody said. A HUD that wants a live
+## number connects [signal DotVoteDirector.countdown_tick], which fires every second
+## either way.
+@export var announce_countdown_every_sec: bool = false
 
 ## Fewest seconds between the end of one ballot and the start of the next.
 ##
@@ -171,6 +239,17 @@ enum RtvOutcome {
 ## Both limits can be on at once and whichever arrives first ends it.
 @export_range(0, 512, 1) var round_limit: int = 0
 
+## The leading score that ends the current choice. 0 disables the score limit.
+##
+## [b]Generic on purpose.[/b] What a score is — frags, team round wins, capture points
+## — is the game's business; the host reports the leading one through
+## [method DotVoteDirector.note_score] and this is the number it is compared with. All
+## three limits can be on at once and whichever arrives first ends the choice.
+@export_range(0, 100000, 1) var score_limit: int = 0
+
+## Points short of [member score_limit] at which the ballot opens.
+@export_range(0, 1000, 1) var vote_lead_score: int = 5
+
 ## Seconds-remaining marks at which a warning is announced, e.g. "300,60,30".
 ##
 ## [b]A list of strings rather than of floats[/b] because that is what survives the
@@ -185,6 +264,9 @@ enum RtvOutcome {
 
 ## Rounds an extend adds, when the limit is in rounds.
 @export_range(0, 64, 1) var extend_rounds: int = 3
+
+## Points an extend adds to [member score_limit], when there is one.
+@export_range(0, 10000, 1) var extend_score: int = 10
 
 ## How many times one choice may be extended. 0 = unlimited.
 ##
@@ -231,6 +313,25 @@ enum RtvOutcome {
 
 @export var rtv_outcome: RtvOutcome = RtvOutcome.OPEN_VOTE
 
+## Seconds after a rock-the-vote ballot that changed nothing before another may pass.
+##
+## [b]Without it the vote that just failed is the vote that happens next.[/b] The same
+## players who rocked it rock it again the moment the ballot closes, and a server whose
+## majority wanted to stay is asked the same question every thirty seconds until the
+## minority wins by attrition.
+@export_range(0.0, 3600.0, 10.0) var rtv_interval_sec: float = 240.0
+
+## When the winner of a ballot that rocking the vote opened takes effect.
+##
+## Separate from [member apply] because the two are different requests. The end-of-map
+## ballot is "what next, when this ends"; a rock-the-vote is "we want to stop now", and
+## honouring it at the end of the clock is a server that heard the question and did
+## not answer it. [constant Apply.IMMEDIATE] is the long-standing default.
+@export var rtv_apply: Apply = Apply.IMMEDIATE
+
+## What a passed rock-the-vote does once the next choice is already decided.
+@export var rtv_after_decided: RtvAfterDecided = RtvAfterDecided.CHANGE_NOW
+
 @export_group("Nominations")
 
 @export var nominations_enabled: bool = true
@@ -272,6 +373,15 @@ enum RtvOutcome {
 ## player pressing a key again because nothing visible happened.
 @export var nomination_seconding: bool = true
 
+## Whether a player leaving takes their nominations with them.
+##
+## Off, and [method DotVoteDirector.forget_voter] explains why: a nomination is a
+## request of the server rather than of the person. The long-standing community
+## map-choosers drop them on disconnect, and a server that wants that behaviour turns
+## this on — the removal is reported through
+## [signal DotVoteDirector.nomination_removed] either way.
+@export var nominations_forget_leavers: bool = false
+
 @export_group("Ballot")
 
 ## Most options on a ballot.
@@ -301,6 +411,48 @@ enum RtvOutcome {
 
 ## Whether what is currently running may be filled in as an ordinary option.
 @export var include_current: bool = false
+
+## Whether a ballot that rocking the vote opened offers "don't change" in place of
+## "extend".
+##
+## [b]Extending a map the players just asked to leave is the wrong question.[/b] On an
+## end-of-map ballot "extend" means "more of this"; on a rock-the-vote ballot the clock
+## still has time on it, and what the people who did not rock it want is for nothing to
+## happen — which is "don't change", and it leaves the clock where it was rather than
+## adding to it.
+@export var early_vote_keep: bool = true
+
+## Whether a "no vote" option is on the ballot: recorded, and counted toward nothing.
+##
+## For the player who has been shown a ballot and has no opinion. Without it they either
+## ignore it — and a ballot that closes when everybody has voted then waits out its
+## whole clock for them — or they pick something at random, which is a vote for a map
+## nobody wanted. An abstention closes their part of the ballot, counts toward the
+## quorum (they were asked, and answered "you decide"), and is in no option's count and
+## no majority's denominator.
+@export var include_abstain: bool = false
+
+## Whether "extend", "don't change" and "no vote" are listed before the choices.
+##
+## [b]Presentation only.[/b] A tie broken by [constant TieBreak.BALLOT_ORDER] is still
+## broken as though the choices came first — see [method DotVoteBallot.option_ids] — or
+## moving an option up a menu would quietly make every tie go to the status quo.
+@export var pseudo_options_first: bool = false
+
+## Whether the ballot is shuffled before it is shown.
+##
+## Nominations are placed first and everybody picks from the top of a list they only
+## half read; shuffling removes the advantage of having been nominated early. Seeded
+## from [member fill_seed], so a client that knows the seed shows the same order.
+## [constant TieBreak.BALLOT_ORDER] follows the shuffled order, which is the point.
+@export var shuffle_ballot: bool = false
+
+## How an unofficial choice is marked on the ballot. Empty marks nothing.
+##
+## [code]%s[/code] is the choice's name — [code]"*%s"[/code], [code]"%s (custom)"[/code].
+## A marker with no [code]%s[/code] is appended. Which choices are unofficial is the
+## source's to say ([member DotVoteChoice.official]), from the thing's own metadata.
+@export var unofficial_marker: String = "*%s"
 
 ## Seconds the ballot stays open.
 @export_range(5.0, 600.0, 5.0) var vote_duration_sec: float = 30.0
@@ -341,7 +493,13 @@ enum RtvOutcome {
 ## What share of the votes cast counts as a majority, 0..1.
 ##
 ## Used by [constant Method.MAJORITY_RUNOFF] and [constant Method.INSTANT_RUNOFF].
-@export_range(0.5, 1.0, 0.01) var majority_fraction: float = 0.5
+##
+## [b]Below a half is allowed[/b], and is what "hold a runoff when the winner has less
+## than 40%" means: the long-standing community map-choosers ask exactly that, and a
+## six-way ballot where the leader has 38% is often a result people accept. Under an
+## instant runoff a share below a half ends the elimination early, which is the same
+## decision made the same way.
+@export_range(0.05, 1.0, 0.01) var majority_fraction: float = 0.5
 
 ## How many go through to a runoff.
 @export_range(2, 8, 1) var runoff_options: int = 2
@@ -362,6 +520,13 @@ enum RtvOutcome {
 @export_range(0.0, 1.0, 0.05) var quorum: float = 0.0
 
 @export var on_no_quorum: NoQuorum = NoQuorum.WINNER_ANYWAY
+
+## What a ballot nobody voted in decides.
+##
+## Distinct from [member on_no_quorum]: "too few voted" still has a leader to take, and
+## "nobody voted" has none — so the answers are different, and [constant NoVotes.KEEP]
+## is the default because the commonest cause is an empty server.
+@export var on_no_votes: NoVotes = NoVotes.KEEP
 
 ## Whether extend must win outright rather than merely lead.
 ##
@@ -400,6 +565,39 @@ enum RtvOutcome {
 ## Not decoration: it is the gap in which players read what won.
 @export_range(0.0, 60.0, 1.0) var apply_delay_sec: float = 5.0
 
+@export_group("Cues")
+
+## Sound cue ids, emitted through [signal DotVoteDirector.cue] for the host to play.
+## [b]Empty is silent[/b], and every one ships empty.
+##
+## Ids rather than files, and a signal rather than a player, because this addon must
+## not depend on dot-audio — which is itself a catalogue of ids that ships no audio. A
+## host connects the signal to its catalogue; a "sound set" is a different set of ids
+## in this file.
+
+## A ballot opened.
+@export var cue_vote_start: String = ""
+
+## A ballot closed, whatever it decided.
+@export var cue_vote_end: String = ""
+
+## The countdown before a ballot started.
+@export var cue_warning: String = ""
+
+## The countdown before a runoff started.
+@export var cue_runoff_warning: String = ""
+
+## One second of a countdown, as a template: [code]%d[/code] is the seconds left, so
+## [code]"vote.count.%d"[/code] asks for [code]vote.count.3[/code]. Without a
+## [code]%d[/code] the same cue plays every time.
+@export var cue_countdown: String = ""
+
+## Which seconds of a countdown have a cue. Text, for the reason
+## [member warn_at_sec] is text.
+@export var cue_countdown_at: PackedStringArray = PackedStringArray(
+	["10", "5", "4", "3", "2", "1"]
+)
+
 
 func env_prefix() -> String:
 	return "DOT_VOTE_"
@@ -424,6 +622,9 @@ const ENUMS := {
 	"apply": Apply,
 	"cooldown_mode": Cooldown,
 	"rtv_outcome": RtvOutcome,
+	"rtv_apply": Apply,
+	"rtv_after_decided": RtvAfterDecided,
+	"on_no_votes": NoVotes,
 }
 
 
@@ -536,6 +737,84 @@ func warn_marks() -> PackedFloat32Array:
 	return PackedFloat32Array(sorted)
 
 
+## Whether a countdown second has a cue, per [member cue_countdown_at].
+##
+## Parsed on every ask rather than cached, for the same reason [method warn_marks] is:
+## the field is text and may be changed by a console command at any moment.
+func has_countdown_cue(seconds_left: int) -> bool:
+	if cue_countdown == "":
+		return false
+
+	for entry in cue_countdown_at:
+		var text := entry.strip_edges()
+
+		if text.is_valid_int() and text.to_int() == seconds_left:
+			return true
+
+	return false
+
+
+## The cue id for one second of a countdown, or empty.
+func countdown_cue_id(seconds_left: int) -> String:
+	if not has_countdown_cue(seconds_left):
+		return ""
+
+	return cue_countdown % seconds_left if cue_countdown.contains("%d") else cue_countdown
+
+
+## A choice's name as a ballot shows it, marked when it is unofficial.
+##
+## [b]Formatted with [code]replace[/code] rather than [code]%[/code][/b]: a marker an
+## operator typed with a stray [code]%[/code] in it would otherwise fail to format, and
+## GDScript hands back the unformatted string rather than raising — so the ballot would
+## show "*%s" for every custom map with nothing in the log.
+func marked_name(display: String, official: bool) -> String:
+	if official or unofficial_marker == "":
+		return display
+
+	if unofficial_marker.contains("%s"):
+		return unofficial_marker.replace("%s", display)
+
+	return display + unofficial_marker
+
+
+## Layers a game's own vote configuration onto these rules, which hold its defaults.
+##
+## [codeblock]
+## code defaults  <  overlay (the running game's metadata)  <  file  <  DOT_VOTE_*  <  --vote-*
+## [/codeblock]
+##
+## [b]This is [method DotConfig.load_layered] with one layer in front of it, not a new
+## loader.[/b] The overlay is what an operator writes beside the game — a delivered
+## game's [code]game.yml[/code] — and the file is what an operator writes beside the
+## server. Both are optional.
+##
+## [b]A result that does not validate is refused as a whole[/b], and the rules are put
+## back to the defaults they held: a vote whose rules contradict each other is a vote
+## that never opens, and a server that keeps its own tested defaults and logs why is
+## better than one that half-applies a broken file.
+func layer_over_defaults(file_path: String, overlay: Dictionary = {}) -> DotResult:
+	var defaults := to_dictionary()
+
+	if not overlay.is_empty():
+		apply_dictionary(overlay, "game metadata")
+
+	var overlay_unknown := unknown_keys.duplicate()
+	var loaded := load_layered(file_path)
+
+	# load_layered starts its own list of unknown keys; the overlay's are kept in front
+	# of them, so a typo in game.yml is reported exactly like a typo in the file.
+	overlay_unknown.append_array(unknown_keys)
+	unknown_keys = overlay_unknown
+
+	if loaded.ok:
+		return loaded
+
+	apply_dictionary(defaults, "defaults")
+
+	return loaded
+
+
 func validate() -> DotResult:
 	if max_options < 2:
 		return DotResult.fail(
@@ -599,6 +878,28 @@ func validate() -> DotResult:
 			DotError.CODE_INVALID, "A runoff needs at least two options."
 		)
 
+	if trigger == Trigger.SCORE_LIMIT and score_limit <= 0:
+		return DotResult.fail(
+			DotError.CODE_INVALID,
+			"trigger is score_limit but score_limit is 0.",
+			"nothing would ever start a vote"
+		)
+
+	if score_limit > 0 and vote_lead_score >= score_limit:
+		return DotResult.fail(
+			DotError.CODE_INVALID,
+			"vote_lead_score (%d) is not less than score_limit (%d)."
+				% [vote_lead_score, score_limit],
+			"the ballot would open at the first point scored"
+		)
+
+	if vote_lead_fraction >= 1.0:
+		return DotResult.fail(
+			DotError.CODE_INVALID,
+			"vote_lead_fraction must be less than 1.",
+			"the ballot would open the instant the choice started"
+		)
+
 	return DotResult.success(true)
 
 
@@ -609,10 +910,18 @@ func summary_lines() -> PackedStringArray:
 	var out := PackedStringArray()
 
 	out.append("enabled    %s" % ("yes" if enabled else "no"))
-	out.append("trigger    %s" % enum_name("trigger"))
-	out.append("limit      %s%s" % [
+	out.append("trigger    %s, end vote %s" % [
+		enum_name("trigger"), "on" if end_vote else "off"
+	])
+	out.append("limit      %s%s%s" % [
 		"none" if duration_sec <= 0.0 else "%ds" % int(duration_sec),
 		"" if round_limit <= 0 else ", %d rounds" % round_limit,
+		"" if score_limit <= 0 else ", score %d" % score_limit,
+	])
+	out.append("extend     %s, +%ds, %s" % [
+		"offered" if include_extend else "not offered",
+		int(extend_seconds),
+		"unlimited" if max_extends <= 0 else "at most %d" % max_extends,
 	])
 	out.append("ballot     %d options, %d reserved, filled %s" % [
 		max_options, nomination_slots, enum_name("fill")

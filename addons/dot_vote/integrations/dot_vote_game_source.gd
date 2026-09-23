@@ -55,6 +55,37 @@ static func from_registry() -> DotVoteGameSource:
 	return DotVoteGameSource.of(DotRegistry.get_service(&"dot_game_manager"))
 
 
+## What the RUNNING game's descriptor carries under [param key], or an empty dictionary.
+##
+## For a game that configures its own vote beside itself. A delivered game's
+## [code]game.yml[/code] becomes a descriptor, and a module running inside that game
+## has no other way to read what the operator wrote there — it did not load the file,
+## and naming the host's config class would fail to parse in every project without it.
+## Duck-typed through [DotRegistry], like [method from_registry].
+##
+## [b]A copy[/b], for the family's aliasing reason: a caller that layers it and then
+## writes into it would otherwise be writing into the descriptor.
+static func running_game_metadata(key: String) -> Dictionary:
+	var manager: Object = DotRegistry.get_service(&"dot_game_manager")
+
+	if manager == null or not manager.has_method("current"):
+		return {}
+
+	var descriptor: Variant = manager.call("current")
+
+	if descriptor == null or not (descriptor is Object):
+		return {}
+
+	var metadata: Variant = (descriptor as Object).get("metadata")
+
+	if not (metadata is Dictionary):
+		return {}
+
+	var section: Variant = (metadata as Dictionary).get(key, {})
+
+	return (section as Dictionary).duplicate(true) if section is Dictionary else {}
+
+
 func source_name() -> String:
 	return "games"
 
@@ -145,6 +176,12 @@ func _apply_meta(choice: DotVoteChoice, raw: Variant) -> void:
 
 	if settings.has("enabled"):
 		choice.enabled = bool(settings["enabled"])
+
+	# Whether this is one of the server's own. Read from the thing's metadata rather than
+	# from a list of official ids beside it, for this file's usual reason: a second list
+	# keyed on ids is a list that goes stale the first time something is renamed.
+	if settings.has("official"):
+		choice.official = bool(settings["official"])
 
 	if settings.has("cooldown"):
 		choice.cooldown_override = int(settings["cooldown"])

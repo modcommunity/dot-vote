@@ -15,8 +15,8 @@ extends RefCounted
 ##
 ## [b]Every name is configurable, and it has to be.[/b] dot-server already ships
 ## [code]vote[/code] and a votekick; a timer server's players type
-## [code]!rtv[/code] and [code]!nominate[/code]; a Source refugee types
-## [code]timeleft[/code] and [code]nextmap[/code]. Pass [member names] to rename any
+## [code]!rtv[/code] and [code]!nominate[/code]; a player from the older shooters
+## types [code]timeleft[/code] and [code]nextmap[/code]. Pass [member names] to rename any
 ## of them, or [member prefix] to move the lot out of the way.
 
 const CHANNEL := "vote.commands"
@@ -36,6 +36,10 @@ const DEFAULTS := {
 	"endvote": "endvote",
 	"votestatus": "votestatus",
 	"voterules": "voterules",
+	"setnext": "setnextmap",
+	"nominate_add": "nominate_addmap",
+	"forcertv": "forcertv",
+	"reload": "votereload",
 }
 
 ## Which of the above are also typable in chat as [code]!name[/code].
@@ -45,7 +49,9 @@ const DEFAULTS := {
 const CHAT := ["nominate", "rtv", "unrtv", "vote", "timeleft", "nextmap", "nominations"]
 
 ## Roles that need a permission, and which one.
-const ADMIN := ["revote", "extend", "endvote"]
+const ADMIN := [
+	"revote", "extend", "endvote", "setnext", "nominate_add", "forcertv", "reload",
+]
 
 var director: DotVoteDirector = null
 
@@ -56,7 +62,14 @@ var prefix: String = ""
 var names: Dictionary = {}
 
 ## Permission an admin command needs. Empty makes them console-only.
-var admin_permission: String = "changelevel"
+##
+## [b]`changemap`, which is dot-server's [code]DotAdminFlags.CHANGEMAP[/code][/b] — spelled
+## out rather than named, because naming it would make this file fail to parse in a
+## project without dot-server. It was [code]"changelevel"[/code], which is the name of a
+## COMMAND and not a flag anybody holds: [code]DotAdminFlags.granted[/code] matches the
+## string exactly, so every admin vote command was quietly root-only, and an operator
+## who granted an admin the map flag found them refused with nothing saying why.
+var admin_permission: String = "changemap"
 
 ## How a command context becomes a voter id.
 ##
@@ -113,6 +126,10 @@ func bind(host: Object) -> DotResult:
 		"endvote": [_cmd_endvote, "Close the open vote now"],
 		"votestatus": [_cmd_status, "The state of the vote system"],
 		"voterules": [_cmd_rules, "The configured voting rules"],
+		"setnext": [_cmd_setnext, "Set what plays next, as though a vote had chosen it"],
+		"nominate_add": [_cmd_nominate_add, "Put something on the next ballot, whatever the caps"],
+		"forcertv": [_cmd_forcertv, "Rock the vote on everybody's behalf"],
+		"reload": [_cmd_reload, "Re-read the list of choices"],
 	}
 
 	for role: Variant in table:
@@ -183,13 +200,17 @@ func _cmd_nominate(ctx: Object) -> void:
 	var args := _args(ctx)
 
 	if args.is_empty():
+		# Only what could actually be nominated: listing the map that is running, or the
+		# one played twenty minutes ago, is offering a player something the next line
+		# refuses.
 		var listed := PackedStringArray()
 
-		for id in director.source.ids() if director.source != null else []:
+		for id in director.nominatable_ids():
 			listed.append(String(id))
 
 		_reply(ctx, "Usage: %s <name>. Available: %s" % [
-			command_name("nominate"), ", ".join(listed)
+			command_name("nominate"),
+			", ".join(listed) if not listed.is_empty() else "nothing right now",
 		])
 		return
 
@@ -256,7 +277,7 @@ func _cmd_vote(ctx: Object) -> void:
 		var lines := PackedStringArray()
 
 		for i in range(options.size()):
-			lines.append("%d. %s" % [i + 1, String(options[i])])
+			lines.append("%d. %s" % [i + 1, director.option_label(options[i])])
 
 		ctx.call("reply_lines", lines)
 		return
@@ -296,8 +317,50 @@ func _cmd_nextmap(ctx: Object) -> void:
 
 # --- Operators' commands ---------------------------------------------------
 
+## An admin's "vote now". Through the countdown if there is one, and replacing a change
+## already decided, because an admin asking for a vote has decided the last one does
+## not stand.
 func _cmd_revote(ctx: Object) -> void:
-	_reply_result(ctx, director.open_vote(), "Vote opened.")
+	var result := director.start_vote(DotVoteClock.REASON_MANUAL, true)
+
+	_reply_result(
+		ctx, result, "Vote starting." if director.is_counting_down() else "Vote opened."
+	)
+
+
+func _cmd_setnext(ctx: Object) -> void:
+	var args := _args(ctx)
+
+	if args.is_empty():
+		_reply(ctx, "Usage: %s <name>" % command_name("setnext"))
+		return
+
+	var id := StringName(args[0])
+	_reply_result(ctx, director.set_next(id), "Next: %s." % id)
+
+
+func _cmd_nominate_add(ctx: Object) -> void:
+	var args := _args(ctx)
+
+	if args.is_empty():
+		_reply(ctx, "Usage: %s <name>" % command_name("nominate_add"))
+		return
+
+	var id := StringName(args[0])
+	_reply_result(
+		ctx, director.force_nominate(id, _voter(ctx)), "%s is on the next ballot." % id
+	)
+
+
+func _cmd_forcertv(ctx: Object) -> void:
+	_reply_result(ctx, director.force_rtv(), "Rocked.")
+
+
+func _cmd_reload(ctx: Object) -> void:
+	var result := director.reload()
+	var count := director.source.choices().size() if director.source != null else 0
+
+	_reply_result(ctx, result, "Reloaded: %d choices." % count)
 
 
 func _cmd_extend(ctx: Object) -> void:

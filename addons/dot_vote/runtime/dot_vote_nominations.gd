@@ -14,6 +14,22 @@ extends RefCounted
 
 const CHANNEL := "vote.nominations"
 
+## Why a nomination came off the list. What [signal removed] carries.
+const REASON_WITHDRAWN := &"withdrawn"
+const REASON_REPLACED := &"replaced"
+const REASON_LEFT := &"voter_left"
+const REASON_BALLOT := &"ballot"
+const REASON_CLEARED := &"cleared"
+const REASON_ADMIN := &"admin"
+
+## A nomination came off the list, and why.
+##
+## [b]Every path that removes one emits it[/b] — withdrawn, replaced by the same
+## player's next, taken onto a ballot, cleared by a new map, removed by an admin. A menu
+## that greys out what is already nominated needs to hear about all of them, and one
+## that heard about only some would keep an entry greyed out for the rest of the map.
+signal removed(voter: StringName, id: StringName, reason: StringName)
+
 ## One nomination: [code]{id, voter, admin}[/code], in the order they arrived.
 var entries: Array[Dictionary] = []
 
@@ -31,9 +47,23 @@ static func of(p_rules: DotVoteRules) -> DotVoteNominations:
 ## Caps and duplicates only — whether the thing is currently running, or on cooldown,
 ## or exists at all, is decided by [DotVoteDirector], which is the only object that
 ## knows. Splitting it this way keeps this class testable with no source at all.
-func add(voter: StringName, id: StringName, is_admin: bool = false) -> DotResult:
+##
+## [param forced] is an admin putting something on the next ballot outright: it ignores
+## every cap and the off switch, and [method forced_ids] keeps it out of the places
+## reserved for players, so forcing one map on does not cost the players a nomination.
+func add(
+	voter: StringName,
+	id: StringName,
+	is_admin: bool = false,
+	forced: bool = false
+) -> DotResult:
 	if rules == null:
 		return DotResult.fail(DotError.CODE_STATE, "No rules.")
+
+	if forced:
+		if not forced_ids().has(id):
+			entries.append({"id": id, "voter": voter, "admin": true, "forced": true})
+		return DotResult.success(id)
 
 	if not rules.nominations_enabled:
 		return DotResult.fail(
@@ -68,7 +98,7 @@ func add(voter: StringName, id: StringName, is_admin: bool = false) -> DotResult
 			# "you already nominated something" is not what a player who has changed
 			# their mind wants to hear, and withdrawing first is a command nobody knows.
 			if rules.nominations_per_player == 1:
-				remove(voter, mine[0])
+				remove(voter, mine[0], REASON_REPLACED)
 			else:
 				return DotResult.fail(
 					DotError.CODE_STATE,
@@ -85,13 +115,32 @@ func add(voter: StringName, id: StringName, is_admin: bool = false) -> DotResult
 	return DotResult.success(id)
 
 
-func remove(voter: StringName, id: StringName) -> bool:
+func remove(
+	voter: StringName,
+	id: StringName,
+	reason: StringName = REASON_WITHDRAWN
+) -> bool:
 	for i in range(entries.size()):
 		if entries[i]["id"] == id and entries[i]["voter"] == voter:
 			entries.remove_at(i)
+			removed.emit(voter, id, reason)
 			return true
 
 	return false
+
+
+## Drops every nomination of [param id], whoever made it. For an admin. Returns how many.
+func remove_id(id: StringName, reason: StringName = REASON_ADMIN) -> int:
+	var count := 0
+
+	for i in range(entries.size() - 1, -1, -1):
+		if entries[i]["id"] == id:
+			var voter: StringName = entries[i]["voter"]
+			entries.remove_at(i)
+			removed.emit(voter, id, reason)
+			count += 1
+
+	return count
 
 
 ## Drops everything one player nominated. For a player who disconnects.
@@ -101,15 +150,17 @@ func remove(voter: StringName, id: StringName) -> bool:
 ## nominated a map and then crashed usually still wants it played. [DotVoteDirector]
 ## leaves nominations alone on disconnect and withdraws rock-the-votes, which is the
 ## asymmetry the two mechanisms actually have.
-func remove_voter(voter: StringName) -> int:
-	var removed := 0
+func remove_voter(voter: StringName, reason: StringName = REASON_LEFT) -> int:
+	var count := 0
 
 	for i in range(entries.size() - 1, -1, -1):
 		if entries[i]["voter"] == voter:
+			var id: StringName = entries[i]["id"]
 			entries.remove_at(i)
-			removed += 1
+			removed.emit(voter, id, reason)
+			count += 1
 
-	return removed
+	return count
 
 
 func has_id(id: StringName) -> bool:
@@ -124,13 +175,25 @@ func by_voter(voter: StringName) -> Array[StringName]:
 	var out: Array[StringName] = []
 
 	for entry in entries:
-		if entry["voter"] == voter:
+		if entry["voter"] == voter and not bool(entry.get("forced", false)):
 			out.append(entry["id"])
 
 	return out
 
 
-## Nominated ids in nomination order, each once.
+## Ids an admin forced onto the next ballot, in the order they were forced.
+func forced_ids() -> Array[StringName]:
+	var out: Array[StringName] = []
+
+	for entry in entries:
+		if bool(entry.get("forced", false)) and not out.has(entry["id"]):
+			out.append(entry["id"])
+
+	return out
+
+
+## Nominated ids in nomination order, each once. Forced ones are not here; see
+## [method forced_ids].
 func ordered_ids() -> Array[StringName]:
 	var out: Array[StringName] = []
 	var seen := {}
@@ -138,7 +201,7 @@ func ordered_ids() -> Array[StringName]:
 	for entry in entries:
 		var id: StringName = entry["id"]
 
-		if seen.has(id):
+		if seen.has(id) or bool(entry.get("forced", false)):
 			continue
 
 		seen[id] = true
@@ -176,8 +239,23 @@ func size() -> int:
 	return entries.size()
 
 
-func clear() -> void:
+## Empties the list, reporting each entry. Oldest first, which is the order they arrived.
+func clear(reason: StringName = REASON_CLEARED) -> void:
+	var gone := entries.duplicate()
 	entries.clear()
+
+	for entry in gone:
+		removed.emit(entry["voter"], entry["id"], reason)
+
+
+## Every nomination as [code]{id, voter, admin}[/code], in order. A copy.
+func list() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+
+	for entry in entries:
+		out.append(entry.duplicate())
+
+	return out
 
 
 func describe_lines() -> PackedStringArray:

@@ -35,6 +35,9 @@ var apply_fn: Callable = Callable()
 ## A name for logs.
 var label: String = "list"
 
+## The file [method load_json] last read, so [method reload] can read it again.
+var loaded_from: String = ""
+
 
 static func of(choices: Array[DotVoteChoice]) -> DotVoteListSource:
 	var source := DotVoteListSource.new()
@@ -149,9 +152,20 @@ func load_json(path: String) -> DotResult:
 		if entry is Dictionary:
 			entries.append(DotVoteChoice.from_dictionary(entry as Dictionary))
 
+	loaded_from = path
+
 	DotLog.info(CHANNEL, "choices loaded", {"path": path, "count": entries.size()})
 
 	return DotResult.success(entries.size())
+
+
+## Reads the file [method load_json] last read again. Nothing to do for a list that was
+## built in code, and that is not an error.
+func reload() -> DotResult:
+	if loaded_from == "":
+		return DotResult.success(entries.size())
+
+	return load_json(loaded_from)
 
 
 func to_json(pretty: bool = true) -> String:

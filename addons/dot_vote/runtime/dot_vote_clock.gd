@@ -49,6 +49,13 @@ signal rocked(voter: StringName, votes: int, needed: int)
 
 signal extended(seconds: float, rounds: int)
 
+## The score limit moved — an extend added [member DotVoteRules.extend_score] to it.
+##
+## [b]A host enforcing its own score limit has to hear this[/b], or the match ends on
+## the old number with the vote believing it extended. Separate from [signal extended]
+## so the connections every game already has to that signal keep their shape.
+signal score_limit_changed(limit: int)
+
 ## A round ended. [param played] counts from 1.
 signal round_ended(played: int, limit: int)
 
@@ -56,6 +63,7 @@ const REASON_TIME := &"time"
 const REASON_ROUNDS := &"rounds"
 const REASON_RTV := &"rtv"
 const REASON_MANUAL := &"manual"
+const REASON_SCORE := &"score"
 
 var rules: DotVoteRules = null
 
@@ -75,6 +83,12 @@ var rounds_played: int = 0
 ## Rounds this choice was given. 0 = no round limit.
 var round_limit: int = 0
 
+## The leading score this choice ends at. 0 = no score limit.
+var score_limit: int = 0
+
+## The leading score, as last reported by [method note_score].
+var top_score: int = 0
+
 var extends_used: int = 0
 
 var running: bool = false
@@ -85,6 +99,10 @@ var _rocked: Dictionary = {}
 var _warned: Dictionary = {}
 var _expired: bool = false
 var _vote_due: bool = false
+
+## [member elapsed] before which rocking the vote is refused again, after a
+## rock-the-vote ballot that changed nothing. See [member DotVoteRules.rtv_interval_sec].
+var _rtv_blocked_until: float = 0.0
 
 
 static func of(p_rules: DotVoteRules) -> DotVoteClock:
@@ -105,11 +123,14 @@ func start(choice: DotVoteChoice = null) -> void:
 	round_limit = (
 		choice.rounds_for(rules.round_limit) if choice != null else rules.round_limit
 	)
+	score_limit = rules.score_limit
 
 	remaining = duration
 	elapsed = 0.0
 	rounds_played = 0
+	top_score = 0
 	extends_used = 0
+	_rtv_blocked_until = 0.0
 
 	# [b]Running means started, NOT "has a limit".[/b] It used to mean the latter, and
 	# a choice with no time limit and no round limit — a legitimate configuration, and
@@ -128,6 +149,40 @@ func start(choice: DotVoteChoice = null) -> void:
 
 func stop() -> void:
 	running = false
+
+
+## Carries on from where the clock stopped, without restarting it.
+##
+## [b]What a rock-the-vote ballot that changed nothing needs, and [method start] is
+## wrong for it.[/b] Rocking the vote stops the clock — it has to, or the limit could
+## expire under the ballot — and restarting it afterwards would hand the map a fresh
+## thirty minutes for having been voted on, which is a reward for being unpopular. The
+## time left, the rounds played, the extensions and the warnings already given all stay.
+## The rock-the-vote tally goes: those players have had their vote.
+func resume() -> void:
+	running = true
+	_expired = false
+	_vote_due = false
+	_rocked.clear()
+
+	# A resume that lands inside the lead window asks again on the next tick, which is
+	# right: the end-of-map vote has not happened, and the vote cooldown spaces it from
+	# the one that just closed.
+	DotLog.debug(CHANNEL, "resumed", {"remaining": formatted_remaining()})
+
+
+## Refuses rocking the vote for [param seconds] of elapsed time.
+func block_rtv_for(seconds: float) -> void:
+	_rtv_blocked_until = maxf(_rtv_blocked_until, elapsed + maxf(seconds, 0.0))
+
+
+## Seconds before the end at which the ballot is due, after
+## [member DotVoteRules.vote_lead_fraction].
+func lead_seconds() -> float:
+	if rules.vote_lead_fraction > 0.0 and duration > 0.0:
+		return duration * rules.vote_lead_fraction
+
+	return rules.vote_lead_sec
 
 
 ## Advances by one tick of simulated time.
@@ -150,7 +205,7 @@ func advance(delta: float) -> void:
 			_warned[mark] = true
 			warning.emit(remaining)
 
-	if not _vote_due and remaining <= rules.vote_lead_sec:
+	if not _vote_due and remaining <= lead_seconds():
 		_fire_vote_due(REASON_TIME)
 
 	if remaining <= 0.0:
@@ -173,6 +228,30 @@ func note_round_end() -> bool:
 
 	if rounds_played >= round_limit:
 		_fire(REASON_ROUNDS)
+		return true
+
+	return false
+
+
+## Records the leading score. Returns whether that ended the choice.
+##
+## [b]The host says what a score is[/b] — the top player's frags, the leading team's
+## round wins, a points total — and reports it whenever it changes. Only the leader
+## matters, because a limit is reached by whoever reaches it first.
+func note_score(score: int) -> bool:
+	if _expired:
+		return false
+
+	top_score = score
+
+	if score_limit <= 0:
+		return false
+
+	if not _vote_due and score >= score_limit - rules.vote_lead_score:
+		_fire_vote_due(REASON_SCORE)
+
+	if score >= score_limit:
+		_fire(REASON_SCORE)
 		return true
 
 	return false
@@ -236,12 +315,13 @@ func extends_left() -> int:
 
 
 ## Extends the current choice. False when it has been extended as often as it may be.
-func extend(seconds: float = -1.0, rounds: int = -1) -> bool:
+func extend(seconds: float = -1.0, rounds: int = -1, score: int = -1) -> bool:
 	if not can_extend():
 		return false
 
 	var by_time := seconds if seconds >= 0.0 else rules.extend_seconds
 	var by_rounds := rounds if rounds >= 0 else rules.extend_rounds
+	var by_score := score if score >= 0 else rules.extend_score
 
 	extends_used += 1
 
@@ -251,6 +331,10 @@ func extend(seconds: float = -1.0, rounds: int = -1) -> bool:
 
 	if round_limit > 0:
 		round_limit += by_rounds
+
+	if score_limit > 0 and by_score > 0:
+		score_limit += by_score
+		score_limit_changed.emit(score_limit)
 
 	running = true
 
@@ -266,7 +350,7 @@ func extend(seconds: float = -1.0, rounds: int = -1) -> bool:
 		_rocked.clear()
 
 	DotLog.info(CHANNEL, "extended", {
-		"seconds": by_time, "rounds": by_rounds, "used": extends_used
+		"seconds": by_time, "rounds": by_rounds, "score": by_score, "used": extends_used
 	})
 
 	extended.emit(by_time, by_rounds)
@@ -284,13 +368,14 @@ func rtv_needed(player_count: int) -> int:
 	return maxi(int(ceil(float(player_count) * rules.rtv_fraction)), 1)
 
 
-## Whether rocking the vote is allowed yet.
+## Whether rocking the vote is allowed yet: past the start-of-map delay, and past the
+## interval after a rock-the-vote ballot that changed nothing.
 func rtv_ready() -> bool:
-	return elapsed >= rules.rtv_delay_sec
+	return elapsed >= rules.rtv_delay_sec and elapsed >= _rtv_blocked_until
 
 
 func rtv_wait_remaining() -> float:
-	return maxf(rules.rtv_delay_sec - elapsed, 0.0)
+	return maxf(maxf(rules.rtv_delay_sec, _rtv_blocked_until) - elapsed, 0.0)
 
 
 ## Registers a rock-the-vote. Succeeds whether or not it passed; check
@@ -389,6 +474,9 @@ func timeleft_line() -> String:
 	if round_limit > 0:
 		parts.append("round %d of %d" % [rounds_played + 1, round_limit])
 
+	if score_limit > 0:
+		parts.append("score %d of %d" % [top_score, score_limit])
+
 	if parts.is_empty():
 		parts.append("no time limit")
 
@@ -402,6 +490,7 @@ func describe() -> Dictionary:
 		"rounds": "%d of %s" % [
 			rounds_played, "-" if round_limit <= 0 else str(round_limit)
 		],
+		"score": "%d of %s" % [top_score, "-" if score_limit <= 0 else str(score_limit)],
 		"extends": "%d of %s" % [
 			extends_used, "unlimited" if rules.max_extends <= 0 else str(rules.max_extends)
 		],

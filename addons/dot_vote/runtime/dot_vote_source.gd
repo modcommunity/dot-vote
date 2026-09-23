@@ -55,6 +55,16 @@ func ids() -> Array[StringName]:
 	return out
 
 
+## Re-reads whatever this source caches. What an admin's "reload the list" asks for.
+##
+## [b]Most sources cache nothing[/b] — [method choices] is called fresh every time a
+## ballot is filled, so a catalogue edited at runtime is already current — and the
+## default says so rather than pretending to have done something. A source that reads a
+## file overrides it.
+func reload() -> DotResult:
+	return DotResult.success(0)
+
+
 ## Whether this source can act on a result at all.
 ##
 ## [b]A source that only lists is legitimate[/b] and is what a client-side mirror of a

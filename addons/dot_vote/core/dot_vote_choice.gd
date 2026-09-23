@@ -62,6 +62,15 @@ extends Resource
 ## reachable by name and stops arriving unasked at three in the morning.
 @export var nominate_only: bool = false
 
+## Whether this is one of the server's own, shipped choices rather than a custom one.
+##
+## [b]Informative only[/b] — nothing is refused for being unofficial. It is what
+## [member DotVoteRules.unofficial_marker] marks on a ballot, which is how a player
+## tells the map the game shipped with from the one a community uploaded last week.
+## A source reads it from the thing's own metadata ([code]vote: {official: false}[/code]);
+## true by default, because a server with no opinion should mark nothing.
+@export var official: bool = true
+
 @export_group("Duration")
 
 ## Seconds this choice runs for, overriding [member DotVoteRules.duration_sec].
@@ -156,6 +165,7 @@ func to_dictionary() -> Dictionary:
 		"min_players": min_players,
 		"max_players": max_players,
 		"nominate_only": nominate_only,
+		"official": official,
 		"time_limit_sec": time_limit_sec,
 		"round_limit": round_limit,
 		"weight": weight,
@@ -180,6 +190,7 @@ static func from_dictionary(data: Dictionary) -> DotVoteChoice:
 	choice.min_players = int(data.get("min_players", 0))
 	choice.max_players = int(data.get("max_players", 0))
 	choice.nominate_only = bool(data.get("nominate_only", false))
+	choice.official = bool(data.get("official", true))
 	choice.time_limit_sec = float(data.get("time_limit_sec", -1.0))
 	choice.round_limit = int(data.get("round_limit", -1))
 	choice.weight = float(data.get("weight", 1.0))

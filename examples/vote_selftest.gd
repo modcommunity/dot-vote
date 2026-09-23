@@ -13,7 +13,7 @@ extends Node
 ## "every setting is read by something" is a mechanical detector for this family's most
 ## repeated bug — an exported setting whose name occurs exactly once in its repository
 ## is a setting nothing reads, and one grep over the other addons found twenty-six of
-## them. [DotVoteRules] declares more than forty settings in one resource, which is
+## them. [DotVoteRules] declares eighty settings in one resource, which is
 ## either the addon's best feature or twenty-six of that bug in a new repository. The
 ## check is the difference.
 ##
@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 231
+const CHECKS := 344
 
 var _passed := 0
 var _failed := 0
@@ -62,6 +62,15 @@ func _run() -> void:
 	await _test_fill_modes()
 	await _test_no_quorum_policies()
 	await _test_apply_moments()
+	_test_chooser_settings()
+	_test_countdown()
+	_test_score_limit()
+	_test_lead_fraction()
+	_test_ballot_options()
+	_test_rtv_parity()
+	_test_end_vote_switch()
+	_test_no_votes()
+	_test_admin_and_queries()
 	_test_every_setting_is_read()
 	await _test_real_game_manager()
 	await _test_real_map_catalogue()
@@ -1653,6 +1662,968 @@ func _test_apply_moments() -> void:
 	_done()
 
 
+# --- The map-chooser parity ------------------------------------------------
+#
+# Everything below is a feature the long-standing community map-choosers have and this
+# addon did not, or had in a shape an operator could not reach. The parity table is in
+# docs/parity.md; each section here is one row group of it, run rather than read.
+
+func _test_chooser_settings() -> void:
+	_section("The map-chooser settings layer, validate and format like every other")
+
+	var rules := DotVoteRules.new()
+	rules.apply_dictionary({
+		"on_no_votes": "random",
+		"rtv_apply": "end_of_time",
+		"rtv_after_decided": "deny",
+		"end_vote": "false",
+		"vote_warning_sec": "15",
+	}, "file")
+
+	_check(
+		rules.on_no_votes == DotVoteRules.NoVotes.RANDOM
+			and rules.rtv_apply == DotVoteRules.Apply.END_OF_TIME
+			and rules.rtv_after_decided == DotVoteRules.RtvAfterDecided.DENY,
+		"the new enums are written by name like the old ones"
+	)
+	_check(
+		not rules.end_vote and is_equal_approx(rules.vote_warning_sec, 15.0),
+		"and the switch and the countdown read from text, as env and argv deliver them"
+	)
+
+	var no_score := DotVoteRules.new()
+	no_score.trigger = DotVoteRules.Trigger.SCORE_LIMIT
+	_check(
+		not no_score.validate().ok,
+		"a score-limit trigger with no score limit is refused",
+		"nothing would ever start a vote"
+	)
+
+	var lead := DotVoteRules.new()
+	lead.score_limit = 5
+	lead.vote_lead_score = 5
+	_check(
+		not lead.validate().ok,
+		"and a score lead as large as the limit is refused",
+		"the ballot would open at the first point"
+	)
+
+	var whole := DotVoteRules.new()
+	whole.vote_lead_fraction = 1.0
+	_check(not whole.validate().ok, "and so is a lead fraction of the whole limit")
+
+	# The layering a game's map vote uses: code defaults < the running game's metadata
+	# < a file < DOT_VOTE_* < --vote-*. DotConfig.load_layered with one layer in front.
+	DirAccess.make_dir_recursive_absolute(DATA)
+	var path := DATA.path_join("map_vote.json")
+	DotPaths.write_json(path, {"max_extends": 1, "method": "instant_runoff"})
+
+	var game := DotVoteRules.new()
+	game.extend_seconds = 300.0
+	game.max_extends = 5
+
+	OS.set_environment("DOT_VOTE_VOTE_DURATION_SEC", "45")
+	var layered := game.layer_over_defaults(path, {"extend_seconds": 900, "max_extends": 2})
+	OS.unset_environment("DOT_VOTE_VOTE_DURATION_SEC")
+
+	_check(layered.ok, "a game's rules layer over its own defaults", str(layered.error))
+	_check(
+		is_equal_approx(game.extend_seconds, 900.0),
+		"the game's metadata overrides its code (%.0f)" % game.extend_seconds
+	)
+	_check(
+		game.max_extends == 1 and game.method == DotVoteRules.Method.INSTANT_RUNOFF,
+		"the file overrides the metadata (%d)" % game.max_extends,
+		"what an operator writes beside the server is later than what ships beside the game"
+	)
+	_check(
+		is_equal_approx(game.vote_duration_sec, 45.0),
+		"and the environment overrides the file (%.0f)" % game.vote_duration_sec
+	)
+
+	var broken_path := DATA.path_join("broken_vote.json")
+	DotPaths.write_json(broken_path, {"trigger": "score_limit", "max_extends": 7})
+
+	var guarded := DotVoteRules.new()
+	guarded.max_extends = 3
+	var refused := guarded.layer_over_defaults(broken_path)
+
+	_check(not refused.ok, "a file whose settings contradict each other is refused")
+	_check(
+		guarded.max_extends == 3 and guarded.trigger == DotVoteRules.Trigger.TIME_LIMIT,
+		"and the game keeps its own defaults rather than half of the file (%d)"
+			% guarded.max_extends,
+		"a vote whose rules contradict each other is a vote that never opens"
+	)
+
+	var marked := DotVoteRules.new()
+	_check(
+		marked.marked_name("Kitsune", false) == "*Kitsune"
+			and marked.marked_name("Kitsune", true) == "Kitsune",
+		"an unofficial choice is marked and an official one is not"
+	)
+
+	marked.unofficial_marker = " (custom)"
+	_check(
+		marked.marked_name("Kitsune", false) == "Kitsune (custom)",
+		"a marker with no %s is appended"
+	)
+
+	marked.unofficial_marker = "100%s"
+	_check(
+		marked.marked_name("Kitsune", false) == "100Kitsune",
+		"and a marker with a stray percent sign still formats",
+		"GDScript's % hands back the unformatted string on a bad format, silently"
+	)
+
+	var cues := DotVoteRules.new()
+	cues.cue_countdown = "vote.count.%d"
+	_check(
+		cues.countdown_cue_id(3) == "vote.count.3" and cues.countdown_cue_id(7) == "",
+		"a countdown cue is templated, and only the listed seconds have one"
+	)
+	_check(
+		DotVoteRules.new().countdown_cue_id(3) == "",
+		"and with no cue configured nothing is asked for"
+	)
+
+	_done()
+
+
+func _test_countdown() -> void:
+	_section("A ballot can be counted down to, out loud and by the second")
+
+	var source := DotVoteListSource.of(_choices(["a", "b", "c"]))
+	var rules := _rules()
+	rules.vote_warning_sec = 5.0
+	rules.include_extend = false
+	rules.cooldown = 0
+	rules.cue_warning = "vote.warning"
+	rules.cue_vote_start = "vote.start"
+	rules.cue_vote_end = "vote.end"
+	rules.cue_countdown = "vote.count.%d"
+
+	var director := _make_director(rules, source)
+	director.begin(&"a")
+
+	var started := []
+	var ticks := []
+	var cues := []
+	var said := []
+	director.countdown_started.connect(
+		func(seconds: float, runoff: bool) -> void: started.append([seconds, runoff])
+	)
+	director.countdown_tick.connect(
+		func(left: int, _runoff: bool) -> void: ticks.append(left)
+	)
+	director.cue.connect(func(id: StringName) -> void: cues.append(String(id)))
+	director.announce_fn = func(line: String) -> void: said.append(line)
+
+	_check(director.start_vote().ok, "a vote is started")
+	_check(
+		director.is_counting_down() and not director.is_voting(),
+		"and counts down rather than opening at once"
+	)
+	_check(
+		started.size() == 1 and not bool(started[0][1]),
+		"announcing the countdown once, as a ballot and not a runoff"
+	)
+	_check(
+		not director.nominate(&"p1", &"b").ok
+			and director.nomination_state() == DotVoteDirector.NominationState.VOTE_IN_PROGRESS,
+		"a nomination during the countdown is refused",
+		"it would miss the ballot it is counting down to"
+	)
+
+	for i in range(4):
+		director.advance(1.0)
+
+	_check(not director.is_voting(), "four seconds in, the ballot is not open yet")
+
+	director.advance(1.0)
+
+	_check(director.is_voting(), "and at five it is")
+	_check(
+		ticks == [5, 4, 3, 2, 1],
+		"every second was ticked, from five down to one (%s)" % str(ticks),
+		"the ballot opening is the zero"
+	)
+	_check(
+		cues.has("vote.warning") and cues.has("vote.count.3") and cues.has("vote.start"),
+		"the warning, the countdown and the ballot each asked for their cue (%s)"
+			% ", ".join(PackedStringArray(cues))
+	)
+
+	var countdown_lines := 0
+
+	for line: Variant in said:
+		if str(line).contains("starts in") or str(line).ends_with("…"):
+			countdown_lines += 1
+
+	_check(
+		countdown_lines == 1,
+		"only the start of the countdown is announced by default (%d lines)"
+			% countdown_lines,
+		"fifteen chat lines in fifteen seconds bury everything else anybody said"
+	)
+
+	director.close_vote()
+	_check(cues.has("vote.end"), "and closing the ballot asks for its cue")
+
+	# A stall must not skip a number.
+	var stalled := _make_director(rules, DotVoteListSource.of(_choices(["a", "b"])))
+	stalled.begin(&"a")
+	var stalled_ticks := []
+	stalled.countdown_tick.connect(
+		func(left: int, _runoff: bool) -> void: stalled_ticks.append(left)
+	)
+	stalled.start_vote()
+	stalled.advance(3.5)
+	stalled.advance(2.0)
+
+	_check(
+		stalled_ticks == [5, 4, 3, 2, 1] and stalled.is_voting(),
+		"a server that stalls for three seconds still counts every one (%s)"
+			% str(stalled_ticks),
+		"a sound layer counting down should not skip from five to two"
+	)
+
+	# The runoff has its own, shorter countdown.
+	var runoff_rules := _rules()
+	runoff_rules.method = DotVoteRules.Method.MAJORITY_RUNOFF
+	runoff_rules.max_runoffs = 1
+	runoff_rules.include_extend = false
+	runoff_rules.close_when_all_voted = false
+	runoff_rules.cooldown = 0
+	runoff_rules.runoff_warning_sec = 2.0
+
+	var runoff := _make_director(runoff_rules, DotVoteListSource.of(_choices(["a", "b", "c"])))
+	runoff.begin(&"")
+	var runoff_started := []
+	runoff.countdown_started.connect(
+		func(_s: float, is_runoff: bool) -> void: runoff_started.append(is_runoff)
+	)
+	runoff.open_vote()
+	runoff.cast_one(&"p1", &"a")
+	runoff.cast_one(&"p2", &"b")
+	runoff.cast_one(&"p3", &"c")
+	runoff.close_vote()
+
+	_check(
+		runoff.is_counting_down() and runoff_started == [true],
+		"a runoff is counted down to as a runoff"
+	)
+
+	runoff.advance(2.0)
+	_check(
+		runoff.is_voting() and runoff.ballot.runoffs_held == 1,
+		"and then opens as one"
+	)
+
+	director.queue_free()
+	stalled.queue_free()
+	runoff.queue_free()
+	_done()
+
+
+func _test_score_limit() -> void:
+	_section("A score limit ends a choice the way a frag limit does, and extends")
+
+	var rules := _rules()
+	rules.trigger = DotVoteRules.Trigger.SCORE_LIMIT
+	rules.duration_sec = 0.0
+	rules.score_limit = 30
+	rules.vote_lead_score = 5
+	rules.extend_score = 10
+
+	_check(rules.validate().ok, "a score-limited server with no clock validates")
+
+	var clock := DotVoteClock.of(rules)
+	var due := []
+	var moved := []
+	clock.vote_due.connect(func(reason: StringName) -> void: due.append(reason))
+	clock.score_limit_changed.connect(func(limit: int) -> void: moved.append(limit))
+	clock.start()
+
+	_check(not clock.note_score(24), "24 of 30 is nothing yet")
+	_check(due.is_empty(), "and no ballot is due")
+
+	clock.note_score(25)
+	_check(
+		due == [DotVoteClock.REASON_SCORE],
+		"five short of the limit, the ballot is due, and says why"
+	)
+	_check(clock.note_score(30), "and reaching the limit ends it")
+	_check(clock.is_expired(), "once")
+
+	_check(clock.extend(), "a score-limited choice extends")
+	_check(
+		clock.score_limit == 40 and moved == [40],
+		"by extend_score, and says so to a host enforcing its own limit (%d)"
+			% clock.score_limit
+	)
+	_check(clock.timeleft_line().contains("30 of 40"), "and reports it", clock.timeleft_line())
+
+	var source := DotVoteListSource.of(_choices(["a", "b"]))
+	var director := _make_director(_rules(), source)
+	director.rules.trigger = DotVoteRules.Trigger.SCORE_LIMIT
+	director.rules.duration_sec = 0.0
+	director.rules.score_limit = 20
+	director.rules.vote_lead_score = 2
+	director.rules.include_extend = false
+	director.begin(&"a")
+	director.note_score(18)
+
+	_check(director.is_voting(), "the director opens the ballot off a reported score")
+
+	director.queue_free()
+	_done()
+
+
+func _test_lead_fraction() -> void:
+	_section("The ballot can open at a fraction of the limit rather than a fixed lead")
+
+	var rules := _rules()
+	rules.duration_sec = 100.0
+	rules.vote_lead_sec = 5.0
+	rules.vote_lead_fraction = 0.3
+	rules.extend_seconds = 100.0
+
+	var clock := DotVoteClock.of(rules)
+	var due := []
+	clock.vote_due.connect(func(_r: StringName) -> void: due.append(1))
+	clock.start()
+
+	for i in range(69):
+		clock.advance(1.0)
+
+	_check(due.is_empty(), "with 31 of 100 left nothing is due")
+
+	clock.advance(1.0)
+	_check(due.size() == 1, "with 30 of 100 left, a third of the limit, it is")
+
+	clock.extend()
+	_check(
+		is_equal_approx(clock.lead_seconds(), 60.0),
+		"and an extended limit is asked again at the same point of its new length (%.0f)"
+			% clock.lead_seconds()
+	)
+
+	_done()
+
+
+func _test_ballot_options() -> void:
+	_section("What is on a ballot: no vote, extend when it can happen, and the order")
+
+	var rules := _rules()
+	rules.include_extend = false
+	rules.include_abstain = true
+
+	var ballot := DotVoteBallot.of(rules)
+	ballot.begin(_choices(["a", "b"]), 3)
+
+	_check(ballot.option_ids().has(DotVoteBallot.ABSTAIN), "'no vote' is on the ballot")
+	_check(
+		not ballot.tally().has(DotVoteBallot.ABSTAIN),
+		"and is not an option anything can be counted toward"
+	)
+
+	ballot.cast_vote(&"v1", _one(DotVoteBallot.ABSTAIN))
+	ballot.cast_vote(&"v2", _one(&"b"))
+	ballot.cast_vote(&"v3", _one(DotVoteBallot.ABSTAIN))
+
+	_check(ballot.everybody_voted(), "an abstention is an answer, so the ballot can close")
+
+	var abstained := ballot.resolve()
+	_check(
+		abstained.winner_id == &"b" and abstained.abstained == 2,
+		"one vote beats two abstentions, which are reported (%d)" % abstained.abstained
+	)
+
+	var all_out := DotVoteBallot.of(rules)
+	all_out.begin(_choices(["a", "b"]), 2)
+	all_out.cast_vote(&"v1", _one(DotVoteBallot.ABSTAIN))
+	_check(
+		all_out.resolve().outcome == DotVoteResult.Outcome.EMPTY,
+		"and a ballot where everybody abstained decided nothing"
+	)
+
+	var extend_rules := _rules()
+	var spent := DotVoteBallot.of(extend_rules)
+	spent.extend_available = false
+	spent.begin(_choices(["a"]), 2)
+	_check(
+		not spent.option_ids().has(DotVoteBallot.EXTEND),
+		"'extend' is left off a ballot once the extensions are used up",
+		"an option that does nothing if it wins is not an option"
+	)
+
+	var early := DotVoteBallot.of(extend_rules)
+	early.early = true
+	early.begin(_choices(["a"]), 2)
+	_check(
+		early.option_ids().has(DotVoteBallot.KEEP)
+			and not early.option_ids().has(DotVoteBallot.EXTEND),
+		"a rock-the-vote ballot offers 'don't change' in place of 'extend'"
+	)
+
+	var no_keep := _rules()
+	no_keep.early_vote_keep = false
+	var early_extend := DotVoteBallot.of(no_keep)
+	early_extend.early = true
+	early_extend.begin(_choices(["a"]), 2)
+	_check(
+		early_extend.option_ids().has(DotVoteBallot.EXTEND)
+			and not early_extend.option_ids().has(DotVoteBallot.KEEP),
+		"unless the server says otherwise"
+	)
+
+	var first_rules := _rules()
+	first_rules.include_extend = false
+	first_rules.include_keep = true
+	first_rules.pseudo_options_first = true
+	first_rules.tie_break = DotVoteRules.TieBreak.BALLOT_ORDER
+
+	var first := DotVoteBallot.of(first_rules)
+	first.begin(_choices(["a", "b"]), 2)
+	_check(first.option_ids()[0] == DotVoteBallot.KEEP, "'don't change' can be listed first")
+
+	first.cast_vote(&"v1", _one(&"a"))
+	first.cast_vote(&"v2", _one(DotVoteBallot.KEEP))
+	_check(
+		first.resolve().winner_id == &"a",
+		"and still loses a tie a choice listed after it",
+		"moving an option up a menu must not make every tie go to the status quo"
+	)
+
+	var cut_rules := _rules()
+	cut_rules.include_extend = false
+	cut_rules.method = DotVoteRules.Method.MAJORITY_RUNOFF
+	cut_rules.runoff_options = 2
+	cut_rules.max_runoffs = 1
+
+	var cut := DotVoteBallot.of(cut_rules)
+	cut.begin(_choices(["a", "b", "c", "d"]), 7)
+	for pair: Array in [["v1", "a"], ["v2", "a"], ["v3", "b"], ["v4", "b"],
+			["v5", "c"], ["v6", "c"], ["v7", "d"]]:
+		cut.cast_vote(StringName(pair[0]), _one(StringName(pair[1])))
+
+	var three_way := cut.resolve()
+	_check(
+		three_way.outcome == DotVoteResult.Outcome.RUNOFF and three_way.runoff_ids.size() == 3,
+		"three tied at the runoff line all go through, not two of them (%d)"
+			% three_way.runoff_ids.size(),
+		"cutting a tie by menu position drops an option for being lower on a list"
+	)
+
+	var low_rules := cut_rules.duplicate() as DotVoteRules
+	low_rules.majority_fraction = 0.4
+
+	var low := DotVoteBallot.of(low_rules)
+	low.begin(_choices(["a", "b", "c"]), 7)
+	for pair: Array in [["v1", "a"], ["v2", "a"], ["v3", "a"], ["v4", "b"],
+			["v5", "b"], ["v6", "c"], ["v7", "c"]]:
+		low.cast_vote(StringName(pair[0]), _one(StringName(pair[1])))
+
+	_check(
+		low.resolve().winner_id == &"a",
+		"a runoff threshold below a half takes a 3-of-7 leader without one"
+	)
+
+	# Shuffled, and reproducibly so.
+	var shuffle_a := _rules()
+	shuffle_a.shuffle_ballot = true
+	shuffle_a.fill = DotVoteRules.Fill.SEQUENTIAL
+	shuffle_a.include_extend = false
+	shuffle_a.max_options = 6
+	shuffle_a.nomination_slots = 0
+	shuffle_a.cooldown = 0
+	shuffle_a.fill_seed = 99
+
+	var shuffle_b := shuffle_a.duplicate() as DotVoteRules
+
+	var left := _make_director(shuffle_a, DotVoteListSource.of(_choices(["a", "b", "c", "d", "e", "f"])))
+	var right := _make_director(shuffle_b, DotVoteListSource.of(_choices(["a", "b", "c", "d", "e", "f"])))
+	left.begin(&"")
+	right.begin(&"")
+	left.open_vote()
+	right.open_vote()
+
+	var order := PackedStringArray()
+	for id in left.ballot.option_ids():
+		order.append(String(id))
+
+	_check(
+		", ".join(order) != "a, b, c, d, e, f" and order.size() == 6,
+		"a shuffled ballot is not in the source's order (%s)" % ", ".join(order)
+	)
+	_check(
+		left.ballot.option_ids() == right.ballot.option_ids(),
+		"and two directors with the same seed shuffle it the same way",
+		"a client following along must show the numbers the server counts"
+	)
+
+	# Custom maps are marked where the players see them.
+	var custom := DotVoteChoice.of(&"surf_new", "Surf New")
+	custom.official = false
+	var marked_source := DotVoteListSource.of([custom, DotVoteChoice.of(&"shipped", "Shipped")] as Array[DotVoteChoice])
+	var marked_rules := _rules()
+	marked_rules.include_extend = false
+	marked_rules.cooldown = 0
+
+	var marker := _make_director(marked_rules, marked_source)
+	var said := []
+	marker.announce_fn = func(line: String) -> void: said.append(line)
+	marker.begin(&"")
+	marker.open_vote()
+
+	_check(
+		said.size() == 1 and str(said[0]).contains("*Surf New")
+			and not str(said[0]).contains("*Shipped"),
+		"an unofficial choice is marked on the ballot and an official one is not",
+		str(said)
+	)
+	_check(
+		not marker.is_official(&"surf_new") and marker.is_official(&"shipped"),
+		"and whether one is official can be asked"
+	)
+
+	left.queue_free()
+	right.queue_free()
+	marker.queue_free()
+	_done()
+
+
+func _rtv_director(rules: DotVoteRules, applied: Array) -> DotVoteDirector:
+	var source := DotVoteListSource.of(_choices(["a", "b", "c"]))
+	source.apply_fn = func(id: StringName) -> DotResult:
+		applied.append(id)
+		return DotResult.success(id)
+
+	rules.duration_sec = 100.0
+	rules.vote_lead_sec = 10.0
+	rules.rtv_delay_sec = 0.0
+	rules.rtv_fraction = 0.5
+	rules.rtv_min_players = 2
+	rules.vote_cooldown_sec = 0.0
+	rules.close_when_all_voted = false
+	rules.vote_duration_sec = 5.0
+	rules.cooldown = 0
+
+	var director := _make_director(rules, source)
+	director.begin(&"a")
+	source.current = &"a"
+	return director
+
+
+func _test_rtv_parity() -> void:
+	_section("Rocking the vote: when it changes, the interval, and after a decision")
+
+	# The winner of a rock-the-vote ballot can wait for the end of the map.
+	var applied := []
+	var rules := _rules()
+	rules.rtv_apply = DotVoteRules.Apply.END_OF_TIME
+	var director := _rtv_director(rules, applied)
+
+	for i in range(20):
+		director.advance(1.0)
+
+	director.rock_the_vote(&"p1")
+	director.rock_the_vote(&"p2")
+
+	_check(director.is_voting(), "two of four rock the vote and a ballot opens")
+	_check(
+		director.ballot.option_ids().has(DotVoteBallot.KEEP)
+			and not director.ballot.option_ids().has(DotVoteBallot.EXTEND),
+		"offering 'don't change' rather than 'extend'"
+	)
+
+	director.cast_one(&"p1", &"b")
+
+	for i in range(5):
+		director.advance(1.0)
+
+	_check(
+		director.pending_id() == &"b" and applied.is_empty(),
+		"b wins and waits, because rtv_apply is end_of_time"
+	)
+	_check(
+		director.clock.running and not director.clock.is_expired(),
+		"with the clock running again, or the moment it waits for would never come"
+	)
+	_check(director.has_end_vote_finished(), "and what is next counts as decided")
+
+	for i in range(80):
+		director.advance(1.0)
+
+	_check(
+		applied == [&"b"],
+		"and it changes when the clock runs out (%s)" % str(applied)
+	)
+
+	# "Don't change" on a rock-the-vote ballot carries on where the clock was.
+	var kept := []
+	var keep_rules := _rules()
+	keep_rules.rtv_interval_sec = 30.0
+	var keeper := _rtv_director(keep_rules, kept)
+
+	for i in range(40):
+		keeper.advance(1.0)
+
+	keeper.rock_the_vote(&"p1")
+	keeper.rock_the_vote(&"p2")
+	keeper.cast_one(&"p1", DotVoteBallot.KEEP)
+
+	for i in range(5):
+		keeper.advance(1.0)
+
+	_check(
+		kept.is_empty() and not keeper.is_voting(),
+		"'don't change' changes nothing"
+	)
+	_check(
+		keeper.clock.remaining > 50.0 and keeper.clock.remaining < 61.0,
+		"and the clock carries on from where it was, not from the top (%.0f left)"
+			% keeper.clock.remaining,
+		"restarting it would give an unpopular map a fresh limit for being voted on"
+	)
+
+	var again := keeper.rock_the_vote(&"p1")
+	_check(
+		not again.ok and again.code() == DotError.CODE_RATE_LIMITED,
+		"and rocking the vote is refused for the interval after",
+		str(again.error)
+	)
+
+	for i in range(31):
+		keeper.advance(1.0)
+
+	_check(keeper.rock_the_vote(&"p1").ok, "and allowed again once it has passed")
+
+	# After a decision, rocking the vote brings it forward.
+	var forward := []
+	var forward_rules := _rules()
+	var bringer := _rtv_director(forward_rules, forward)
+	bringer.set_next(&"c")
+
+	_check(forward.is_empty(), "an admin sets what is next, and nothing changes yet")
+
+	bringer.rock_the_vote(&"p1")
+	bringer.rock_the_vote(&"p2")
+
+	_check(
+		forward == [&"c"],
+		"and a passed rock-the-vote changes to it now (%s)" % str(forward)
+	)
+
+	var denied := []
+	var deny_rules := _rules()
+	deny_rules.rtv_after_decided = DotVoteRules.RtvAfterDecided.DENY
+	var denier := _rtv_director(deny_rules, denied)
+	denier.set_next(&"c")
+
+	_check(
+		not denier.rock_the_vote(&"p1").ok,
+		"or is refused, when the server says a decision stands"
+	)
+
+	# An admin's forced rock-the-vote.
+	var forced := []
+	var forcer := _rtv_director(_rules(), forced)
+	_check(forcer.force_rtv().ok and forcer.is_voting(), "an admin can rock the vote alone")
+
+	var forced_after := []
+	var decided := _rtv_director(_rules(), forced_after)
+	decided.set_next(&"b")
+	decided.force_rtv()
+	decided.advance(0.1)
+	_check(
+		forced_after == [&"b"],
+		"and with the next already decided, that brings it forward (%s)" % str(forced_after)
+	)
+
+	director.queue_free()
+	keeper.queue_free()
+	bringer.queue_free()
+	denier.queue_free()
+	forcer.queue_free()
+	decided.queue_free()
+	_done()
+
+
+func _test_end_vote_switch() -> void:
+	_section("The end-of-map vote is a switch, and off still ends the map")
+
+	for trigger: Variant in [DotVoteRules.Trigger.TIME_LIMIT, DotVoteRules.Trigger.RTV_ONLY]:
+		var applied := []
+		var source := DotVoteListSource.of(_choices(["a", "b", "c"]))
+		source.apply_fn = func(id: StringName) -> DotResult:
+			applied.append(id)
+			return DotResult.success(id)
+
+		var rules := _rules()
+		rules.trigger = trigger as DotVoteRules.Trigger
+		rules.end_vote = trigger != DotVoteRules.Trigger.TIME_LIMIT
+		rules.duration_sec = 100.0
+		rules.vote_lead_sec = 20.0
+		rules.cooldown = 0
+		rules.apply = DotVoteRules.Apply.IMMEDIATE
+
+		var director := _make_director(rules, source)
+		director.begin(&"a")
+		source.current = &"a"
+
+		for i in range(90):
+			director.advance(1.0)
+
+		var label := "end_vote off" if trigger == DotVoteRules.Trigger.TIME_LIMIT \
+			else "rtv_only"
+
+		_check(
+			not director.is_voting() and not director.end_vote_enabled(),
+			"%s: no ballot opens when the lead is reached" % label,
+			"rtv_only used to open one at the lead anyway, with a clock running"
+		)
+
+		for i in range(11):
+			director.advance(1.0)
+
+		_check(
+			applied == [&"b"],
+			"%s: and the map still ends, on the rotation (%s)" % [label, str(applied)]
+		)
+
+		director.queue_free()
+
+	var default_director := _make_director(_rules(), DotVoteListSource.of(_choices(["a"])))
+	_check(default_director.end_vote_enabled(), "and it is on by default")
+	default_director.queue_free()
+
+	_done()
+
+
+func _test_no_votes() -> void:
+	_section("A ballot nobody voted in, three ways")
+
+	for policy: Variant in [
+		DotVoteRules.NoVotes.KEEP,
+		DotVoteRules.NoVotes.RANDOM,
+		DotVoteRules.NoVotes.ROTATION,
+	]:
+		var applied := []
+		var source := DotVoteListSource.of(_choices(["a", "b", "c", "d"]))
+		source.apply_fn = func(id: StringName) -> DotResult:
+			applied.append(id)
+			return DotResult.success(id)
+
+		var rules := _rules()
+		rules.on_no_votes = policy as DotVoteRules.NoVotes
+		rules.include_extend = true
+		rules.duration_sec = 600.0
+		rules.cooldown = 0
+		rules.apply = DotVoteRules.Apply.IMMEDIATE
+
+		var director := _make_director(rules, source)
+		director.begin(&"a")
+		source.current = &"a"
+		director.open_vote()
+
+		var result := director.close_vote()
+
+		match policy:
+			DotVoteRules.NoVotes.KEEP:
+				_check(
+					applied.is_empty() and result.outcome == DotVoteResult.Outcome.EMPTY,
+					"KEEP stays where it is"
+				)
+			DotVoteRules.NoVotes.RANDOM:
+				_check(
+					applied.size() == 1 and applied[0] != &"a"
+						and result.outcome == DotVoteResult.Outcome.WINNER,
+					"RANDOM draws one of the ballot's options (%s)" % str(applied)
+				)
+				_check(
+					result.summary.contains("Nobody voted"),
+					"and the result says why, before it is announced",
+					result.summary
+				)
+			_:
+				_check(
+					applied == [&"b"],
+					"ROTATION takes the next in order (%s)" % str(applied)
+				)
+
+		director.queue_free()
+
+	_done()
+
+
+func _test_admin_and_queries() -> void:
+	_section("Admins set, force and remove; everything can be asked")
+
+	var source := DotVoteListSource.of(_choices(["a", "b", "c", "d", "e"]))
+	var rules := _rules()
+	rules.include_extend = false
+	rules.nomination_slots = 0
+	rules.cooldown = 2
+	rules.cooldown_max_fraction = 1.0
+	# Off, so what blocks a vote below is the thing being tested and not the cooldown
+	# every closed ballot starts — a check that passes for the wrong reason is blind.
+	rules.vote_cooldown_sec = 0.0
+
+	var director := _make_director(rules, source)
+	var removed := []
+	director.nomination_removed.connect(
+		func(voter: StringName, id: StringName, reason: StringName) -> void:
+			removed.append([String(voter), String(id), String(reason)])
+	)
+	director.begin(&"b")
+	director.begin(&"a")
+
+	var nominatable := director.nominatable_ids()
+	_check(
+		not nominatable.has(&"a") and not nominatable.has(&"b") and nominatable.has(&"c"),
+		"what can be nominated leaves out what is running and what was just played"
+	)
+	_check(
+		director.excluded_ids().has(&"b"),
+		"and what is excluded for having been played can be asked"
+	)
+	_check(director.nomination_state() == DotVoteDirector.NominationState.YES, "nominating is open")
+
+	director.nominate(&"p1", &"c")
+	director.nominate(&"p1", &"d")
+	_check(
+		removed.size() == 1 and removed[0] == ["p1", "c", "replaced"],
+		"replacing a nomination reports the one it replaced (%s)" % str(removed)
+	)
+
+	director.withdraw_nomination(&"p1", &"d")
+	_check(
+		removed.size() == 2 and removed[1][2] == "withdrawn",
+		"and withdrawing one reports it"
+	)
+
+	director.nominate(&"p2", &"c")
+	_check(director.remove_nomination(&"c") == 1, "an admin removes a nomination")
+	_check(removed[-1][2] == "admin", "and that is reported as an admin's")
+
+	director.nominate(&"p3", &"e")
+	director.forget_voter(&"p3")
+	_check(
+		director.nominated_ids() == ([&"e"] as Array[StringName]),
+		"a player leaving keeps their nomination by default"
+	)
+	director.rules.nominations_forget_leavers = true
+	director.forget_voter(&"p3")
+	_check(
+		director.nominated_ids().is_empty() and removed[-1][2] == "voter_left",
+		"or takes it with them when the server says so"
+	)
+
+	director.rules.nominations_enabled = false
+	_check(
+		director.nomination_state() == DotVoteDirector.NominationState.DISABLED,
+		"nominations turned off say so"
+	)
+	_check(
+		director.force_nominate(&"d").ok,
+		"and an admin can still put something on the next ballot"
+	)
+	_check(
+		director.nominated_list().size() == 1 and bool(director.nominated_list()[0]["forced"]),
+		"which is listed with who put it there"
+	)
+	director.rules.nominations_enabled = true
+
+	_check(director.can_start_vote(), "a vote could start")
+	director.open_vote()
+	_check(
+		director.ballot.option_ids().has(&"d"),
+		"the forced choice is on the ballot even with no places reserved for nominations"
+	)
+	_check(
+		removed[-1][2] == "ballot",
+		"and the ballot taking it is reported as the reason it came off the list"
+	)
+	_check(not director.can_start_vote(), "and no other vote could start during it")
+	_check(
+		not director.set_next(&"c").ok,
+		"an admin cannot set what is next while the players are deciding it"
+	)
+	director.close_vote()
+
+	var busy := [true]
+	director.busy_fn = func() -> bool: return busy[0]
+	_check(not director.can_start_vote(), "another vote on screen blocks this one")
+
+	var waited := director.open_vote()
+	_check(not waited.ok, "and opening refuses rather than stacking two menus")
+
+	director._vote_due_pending = true
+	director.advance(0.5)
+	_check(not director.is_voting(), "a due vote waits while the other one is up")
+
+	busy[0] = false
+	director.advance(0.5)
+	_check(director.is_voting(), "and opens as soon as it is gone")
+	director.close_vote()
+
+	var picked := director.open_vote(DotVoteClock.REASON_MANUAL, [&"c", &"e", &"nonsense"] as Array[StringName])
+	_check(
+		picked.ok and director.ballot.option_ids() == ([&"c", &"e"] as Array[StringName]),
+		"an admin can hand-pick a ballot, and an unknown id is dropped rather than fatal"
+	)
+	director.close_vote()
+
+	_check(not director.has_end_vote_finished(), "nothing is decided yet")
+	_check(director.set_next(&"c").ok, "an admin sets what is next")
+	_check(
+		director.has_end_vote_finished() and director.pending_id() == &"c",
+		"which counts as the end-of-map vote having finished"
+	)
+	_check(
+		director.nomination_state() == DotVoteDirector.NominationState.VOTE_COMPLETE,
+		"and closes nominations, which could no longer reach any ballot"
+	)
+	_check(
+		director.start_vote(DotVoteClock.REASON_MANUAL, true).ok and director.is_voting(),
+		"an admin's forced vote replaces the decision"
+	)
+	director.close_vote()
+
+	# A list read from a file re-reads it on request.
+	var path := DATA.path_join("choices.json")
+	var listed := DotVoteListSource.of(_choices(["x", "y"]))
+	listed.save_json(path)
+
+	var reloading := DotVoteListSource.new()
+	reloading.load_json(path)
+	var reloader := _make_director(_rules(), reloading)
+
+	DotVoteListSource.of(_choices(["x", "y", "z"])).save_json(path)
+	_check(
+		reloader.reload().ok and reloading.choices().size() == 3,
+		"an operator edits the list on disk and the reload reads it (%d)"
+			% reloading.choices().size()
+	)
+
+	var full_rules := _rules()
+	full_rules.nominations_max = 1
+	var full := _make_director(full_rules, DotVoteListSource.of(_choices(["a", "b", "c"])))
+	full.begin(&"a")
+	full.nominate(&"p1", &"b")
+	_check(
+		full.nomination_state() == DotVoteDirector.NominationState.FULL,
+		"and a full list says it is full"
+	)
+
+	director.queue_free()
+	reloader.queue_free()
+	full.queue_free()
+	_done()
+
+
 # --- The settings sweep ----------------------------------------------------
 
 ## Fails for any setting nothing reads.
@@ -1664,7 +2635,7 @@ func _test_apply_moments() -> void:
 ## left every team spawning in the other team's base, a replay recorder with a
 ## documented ceiling and no ceiling.
 ##
-## [DotVoteRules] puts more than forty settings in one resource, which makes this addon
+## [DotVoteRules] puts eighty settings in one resource, which makes this addon
 ## either the best answer to that or twenty-six new instances of it. So the detector
 ## runs here rather than in somebody's terminal a year from now.
 func _test_every_setting_is_read() -> void:
@@ -1951,6 +2922,20 @@ func _test_real_game_manager() -> void:
 		not replies.is_empty(),
 		"and `nominate` answers rather than failing silently",
 		replies[0] if not replies.is_empty() else "nothing"
+	)
+
+	var setnext_command: Variant = console.call("find_command", "setnextmap")
+	_check(
+		setnext_command != null
+			and str((setnext_command as Object).get("permission")) == "changemap",
+		"the admin commands are there, behind the map flag an admin actually holds",
+		"they asked for 'changelevel', which is a command and not a flag: root-only"
+	)
+	_check(
+		console.call("find_command", "forcertv") != null
+			and console.call("find_command", "nominate_addmap") != null
+			and console.call("find_command", "votereload") != null,
+		"including forcing a rock-the-vote, adding a nomination and reloading the list"
 	)
 
 	var renamed := DotVoteCommands.new()

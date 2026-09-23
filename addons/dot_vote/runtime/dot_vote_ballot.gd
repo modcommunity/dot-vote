@@ -33,6 +33,12 @@ const EXTEND := &"__extend__"
 ## The pseudo-option for "change nothing and add nothing".
 const KEEP := &"__keep__"
 
+## The pseudo-option for "I have no opinion": recorded, counted toward nothing.
+##
+## Stored as an empty ballot, which is the one shape every counting method here already
+## skips — so an abstention cannot leak into a tally through a method that forgot it.
+const ABSTAIN := &"__abstain__"
+
 signal opened(options: Array)
 signal voted(voter: StringName, choices: Array)
 signal closed(result: DotVoteResult)
@@ -61,6 +67,19 @@ var history: DotVoteHistory = null
 
 ## Consulted only by [constant DotVoteRules.TieBreak.NOMINATION_ORDER]. Optional.
 var nominations: DotVoteNominations = null
+
+## Whether "extend" may be offered at all right now. Set by [DotVoteDirector] from the
+## clock before a ballot opens.
+##
+## [b]A ballot must not offer what cannot happen.[/b] With the extensions used up,
+## "extend" on the ballot is an option that, if it wins, does nothing — and the players
+## who voted for it are told so after the fact.
+var extend_available: bool = true
+
+## Whether this ballot was opened early — by rocking the vote — rather than by a limit
+## running out. Decides whether "don't change" stands in for "extend"; see
+## [member DotVoteRules.early_vote_keep]. Survives a runoff, cleared by [method reset].
+var early: bool = false
 
 
 static func of(p_rules: DotVoteRules) -> DotVoteBallot:
@@ -137,19 +156,59 @@ var _runoff_keep: bool = true
 
 
 func has_extend() -> bool:
-	return rules != null and rules.include_extend and (runoffs_held == 0 or _runoff_extend)
+	if rules == null or not rules.include_extend or not extend_available:
+		return false
+
+	if early and rules.early_vote_keep:
+		return false
+
+	return runoffs_held == 0 or _runoff_extend
 
 
 func has_keep() -> bool:
-	return rules != null and rules.include_keep and (runoffs_held == 0 or _runoff_keep)
+	if rules == null:
+		return false
+
+	if not rules.include_keep and not (early and rules.early_vote_keep):
+		return false
+
+	return runoffs_held == 0 or _runoff_keep
 
 
-## Every votable id, in ballot order: the options, then extend, then keep.
+func has_abstain() -> bool:
+	return rules != null and rules.include_abstain
+
+
+## Every votable id, in the order a player sees them — which is what a number typed
+## into chat indexes.
 ##
-## The pseudo-options go last deliberately. [constant DotVoteRules.TieBreak.BALLOT_ORDER]
-## resolves toward the front, and a tie-break that handed ties to "keep things as they
-## are" would be a server that never changes.
+## The pseudo-options go last unless [member DotVoteRules.pseudo_options_first] moves
+## them. Either way this is presentation: counting and tie-breaking use
+## [method countable_ids], which never moves them.
 func option_ids() -> Array[StringName]:
+	var out: Array[StringName] = []
+	var pseudo := _pseudo_ids()
+
+	if rules != null and rules.pseudo_options_first:
+		out.append_array(pseudo)
+
+	for choice in options:
+		out.append(choice.id)
+
+	if rules == null or not rules.pseudo_options_first:
+		out.append_array(pseudo)
+
+	return out
+
+
+## Every id a vote can count toward, choices first — the order ties are broken in.
+##
+## [b]The pseudo-options go last here whatever the ballot shows[/b], and that is not a
+## detail. [constant DotVoteRules.TieBreak.BALLOT_ORDER] resolves toward the front, and a
+## tie-break that handed ties to "keep things as they are" because an operator moved
+## "extend" to the top of a menu would be a server that never changes. Abstaining is
+## not here at all: it is a vote for nothing.
+func countable_ids() -> Array[StringName]:
 	var out: Array[StringName] = []
 
 	for choice in options:
@@ -160,6 +219,21 @@ func option_ids() -> Array[StringName]:
 
 	if has_keep():
 		out.append(KEEP)
+
+	return out
+
+
+func _pseudo_ids() -> Array[StringName]:
+	var out: Array[StringName] = []
+
+	if has_extend():
+		out.append(EXTEND)
+
+	if has_keep():
+		out.append(KEEP)
+
+	if has_abstain():
+		out.append(ABSTAIN)
 
 	return out
 
@@ -200,6 +274,13 @@ func cast_vote(
 			DotError.CODE_STATE, "You have already voted."
 		)
 
+	if choices[0] == ABSTAIN and has_abstain():
+		# An empty ballot: this voter has answered, and answered nothing.
+		ballots[voter] = [] as Array[StringName]
+		weights[voter] = weight
+		voted.emit(voter, [ABSTAIN])
+		return DotResult.success([] as Array[StringName])
+
 	var legal: Array[StringName] = []
 	var known := option_ids()
 
@@ -211,7 +292,9 @@ func cast_vote(
 				"on it: %s" % ", ".join(_as_strings(known))
 			)
 
-		if legal.has(id):
+		if legal.has(id) or id == ABSTAIN:
+			# "No vote" ranked below a real preference means nothing: the preference is
+			# the vote. Dropped rather than refused, like a duplicate.
 			continue
 
 		legal.append(id)
@@ -251,6 +334,21 @@ func voter_count() -> int:
 	return ballots.size()
 
 
+## Voters who chose something, as opposed to abstaining.
+func real_voter_count() -> int:
+	var count := 0
+
+	for voter: Variant in ballots:
+		if not (ballots[voter] as Array).is_empty():
+			count += 1
+
+	return count
+
+
+func abstention_count() -> int:
+	return ballots.size() - real_voter_count()
+
+
 func has_voted(voter: StringName) -> bool:
 	return ballots.has(voter)
 
@@ -281,7 +379,7 @@ static func _as_strings(ids: Array[StringName]) -> PackedStringArray:
 func tally() -> Dictionary:
 	var counts := {}
 
-	for id in option_ids():
+	for id in countable_ids():
 		counts[id] = 0.0
 
 	var approval := rules != null and rules.method == DotVoteRules.Method.APPROVAL
@@ -315,8 +413,9 @@ func resolve() -> DotVoteResult:
 
 	result.eligible = eligible
 	result.votes_cast = ballots.size()
+	result.abstained = abstention_count()
 
-	var ids := option_ids()
+	var ids := countable_ids()
 
 	if ids.is_empty():
 		result.summary = "Nothing was on the ballot."
@@ -326,11 +425,12 @@ func resolve() -> DotVoteResult:
 	var counts := tally()
 	result.counts = counts
 
-	if ballots.is_empty():
+	if real_voter_count() == 0:
 		# Distinguished from "too few voted": nobody at all voting is usually an empty
 		# server or a vote nobody was shown, and a quorum message about it is confusing.
+		# Everybody abstaining is the same answer — nobody chose anything.
 		result.outcome = DotVoteResult.Outcome.EMPTY
-		result.summary = "Nobody voted."
+		result.summary = "Nobody voted." if ballots.is_empty() else "Everybody abstained."
 		closed.emit(result)
 		return result
 
@@ -395,9 +495,19 @@ func _resolve_majority(result: DotVoteResult, counts: Dictionary) -> void:
 		return
 
 	var ordered := _ordered_ids_by_count(counts)
+	var take := mini(rules.runoff_options, ordered.size())
+
+	# Anything tied with the last place that made it goes through too. Cutting a tie at
+	# the line by ballot order would put one of two equal options in the runoff and
+	# drop the other for being lower on a menu — which is the long-standing map-choosers'
+	# rule as well: "more than two for a revote if they are tied".
+	while take < ordered.size() and is_equal_approx(
+		float(counts.get(ordered[take], 0.0)), float(counts.get(ordered[take - 1], 0.0))
+	):
+		take += 1
 
 	result.outcome = DotVoteResult.Outcome.RUNOFF
-	result.runoff_ids = ordered.slice(0, mini(rules.runoff_options, ordered.size()))
+	result.runoff_ids = ordered.slice(0, take)
 	result.summary = "No majority — a runoff between %s." % ", ".join(
 		_as_strings(result.runoff_ids)
 	)
@@ -410,7 +520,7 @@ func _resolve_majority(result: DotVoteResult, counts: Dictionary) -> void:
 ## tie-break that decides the winner, so the two never disagree about which of two
 ## equal options this server considers "first".
 func _resolve_instant_runoff(result: DotVoteResult) -> void:
-	var remaining := option_ids()
+	var remaining := countable_ids()
 	var counts := {}
 
 	while true:
@@ -535,7 +645,7 @@ func _leader(counts: Dictionary, result: DotVoteResult) -> StringName:
 	var best := -INF
 	var tied: Array[StringName] = []
 
-	for id in option_ids():
+	for id in countable_ids():
 		if not counts.has(id):
 			continue
 
@@ -645,7 +755,7 @@ func _min_by(ids: Array[StringName], key: Callable) -> StringName:
 
 ## Ids ordered by count, most first, ties in ballot order.
 func _ordered_ids_by_count(counts: Dictionary) -> Array[StringName]:
-	var order := option_ids()
+	var order := countable_ids()
 	var out := order.duplicate()
 
 	out.sort_custom(func(a: StringName, b: StringName) -> bool:
@@ -669,6 +779,8 @@ func reset() -> void:
 	runoffs_held = 0
 	_runoff_extend = true
 	_runoff_keep = true
+	extend_available = true
+	early = false
 
 
 func describe() -> Dictionary:
@@ -676,7 +788,9 @@ func describe() -> Dictionary:
 		"open": open,
 		"options": option_ids().size(),
 		"votes": ballots.size(),
+		"abstained": abstention_count(),
 		"eligible": eligible,
+		"early": early,
 		"runoffs": runoffs_held,
 		"tally": tally(),
 	}
