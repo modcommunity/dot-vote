@@ -35,7 +35,11 @@ const RULES_CHANNEL := "vote.rules"
 enum Trigger {
 	## The clock runs out (or [member vote_lead_sec] before it does).
 	TIME_LIMIT,
-	## At the end of a round, once [member round_limit] rounds have been played.
+	## At the end of a round. A round limit opens the ballot at the round end it is due
+	## on, as under [constant TIME_LIMIT]; a time or score limit reaching its lead does
+	## [i]not[/i] open it mid-round, but holds it until the host's next
+	## [method DotVoteDirector.note_round_end]. For a round-based game, where a ballot over
+	## a fight in progress is a ballot nobody reads.
 	ROUND_END,
 	## Only when enough players rock the vote. No clock.
 	RTV_ONLY,
@@ -843,10 +847,15 @@ func validate() -> DotResult:
 			"nothing would ever start a vote; use trigger: rtv_only or manual"
 		)
 
-	if trigger == Trigger.ROUND_END and round_limit <= 0:
+	# Any limit will do: under round_end a time or a score limit is held for the round's
+	# end rather than ignored. What cannot work is no limit at all.
+	if (
+		trigger == Trigger.ROUND_END
+		and round_limit <= 0 and duration_sec <= 0.0 and score_limit <= 0
+	):
 		return DotResult.fail(
 			DotError.CODE_INVALID,
-			"trigger is round_end but round_limit is 0.",
+			"trigger is round_end but there is no round, time or score limit.",
 			"nothing would ever start a vote"
 		)
 

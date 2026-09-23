@@ -55,6 +55,7 @@ stale.
 | Whether this addon changes anything at all | `DotVoteDirector.auto_apply`, or a source with no apply |
 | Command names | `DotVoteCommands.prefix` / `names` |
 | How a command context becomes a voter | `DotVoteCommands.voter_fn` |
+| How what a player typed becomes a choice id | `DotVoteCommands.resolve_fn` — a game whose ids carry a prefix |
 
 ## Parity with the community map-choosers
 
@@ -118,7 +119,7 @@ Found by the parity work, 2026-09-23:
 - **Every admin vote command was root-only.** `DotVoteCommands.admin_permission` was `"changelevel"` — a command's name, not a flag anybody holds — and `DotAdminFlags.granted` matches exactly. It is `"changemap"` now, which is `DotAdminFlags.CHANGEMAP`, spelled out because this file cannot name dot-server's classes.
 - **"Extend" stayed on the ballot after the extensions were used up**, and winning with it produced "This cannot be extended again" and a restarted clock. `DotVoteBallot.extend_available` is set from the clock when a ballot opens.
 - **A nomination made while a ballot was open was accepted and then thrown away** by the change that ballot caused. `nomination_state()` refuses it and says why.
-- **`trigger: time_limit` and `trigger: round_end` behave identically at runtime** — both limits fire whichever the trigger — and differ only in what `validate()` demands. Recorded rather than changed: every game sets one of the two and no behaviour depends on the difference, but it is the shape of a setting that reads differently and decides nothing, and the next person to add a trigger should know.
+- **`trigger: time_limit` and `trigger: round_end` behaved identically at runtime** — both limits fired whichever the trigger — and differed only in what `validate()` demanded: the shape of a setting that reads differently and decides nothing. Fixed in a second pass the same day: under `round_end` a time or score limit reaching its lead no longer opens a ballot over a fight in progress; the director holds it (`is_waiting_for_round_end()`) and the host's next `note_round_end` opens it. A round limit opens at the round end it is due on, as before, and a rock-the-vote never waits. `validate()` now asks only that round_end has some limit. The suite's section runs the same clock under both triggers and fails unless they differ; it was armed by removing the hold, and four checks fired.
 
 And one process hazard, which is already in the family CLAUDE.md and was hit anyway:
 `==` binds tighter than `as`, so `a == [x] as Array[StringName]` parses as
@@ -157,7 +158,7 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-345 checks, non-zero on failure. Three sections matter more than the rest:
+358 checks, non-zero on failure. Three sections matter more than the rest:
 
 - **"Every setting is read by something"** runs this family's own mechanical detector
   over `DotVoteRules` — 80 settings in one resource is either this addon's best

@@ -77,6 +77,15 @@ var admin_permission: String = "changemap"
 ## A game with its own player ids overrides it.
 var voter_fn: Callable = Callable()
 
+## How what a player typed becomes a choice id: [code](text: String) -> StringName[/code].
+##
+## The default takes the text as it is. A game whose ids carry a prefix — arena's
+## [code]map:dm_atrium[/code] beside [code]mode:koth[/code] — sets this, because a player
+## types [code]!nominate dm_atrium[/code] and a command that refused it would be a
+## command nobody can use. Every command that takes a name goes through it: nominate,
+## unnominate, a vote by name, setnextmap and nominate_addmap.
+var resolve_fn: Callable = Callable()
+
 ## Names actually registered, for a module that has to remove them again.
 var registered: PackedStringArray = PackedStringArray()
 
@@ -169,6 +178,13 @@ func _voter(ctx: Object) -> StringName:
 	return &"console"
 
 
+func _resolve(text: String) -> StringName:
+	if resolve_fn.is_valid():
+		return StringName(str(resolve_fn.call(text)))
+
+	return StringName(text)
+
+
 func _args(ctx: Object) -> PackedStringArray:
 	var args: Variant = ctx.get("args")
 
@@ -214,7 +230,7 @@ func _cmd_nominate(ctx: Object) -> void:
 		])
 		return
 
-	var id := StringName(args[0])
+	var id := _resolve(args[0])
 	var result := director.nominate(_voter(ctx), id)
 
 	_reply_result(ctx, result, "Nominated %s." % id)
@@ -227,7 +243,7 @@ func _cmd_unnominate(ctx: Object) -> void:
 		_reply(ctx, "Usage: %s <name>" % command_name("unnominate"))
 		return
 
-	if director.withdraw_nomination(_voter(ctx), StringName(args[0])):
+	if director.withdraw_nomination(_voter(ctx), _resolve(args[0])):
 		_reply(ctx, "Withdrawn.")
 		return
 
@@ -294,7 +310,7 @@ func _cmd_vote(ctx: Object) -> void:
 
 		choice = options[index]
 	else:
-		choice = StringName(text)
+		choice = _resolve(text)
 
 	_reply_result(ctx, director.cast_one(_voter(ctx), choice), "Voted for %s." % choice)
 
@@ -335,7 +351,7 @@ func _cmd_setnext(ctx: Object) -> void:
 		_reply(ctx, "Usage: %s <name>" % command_name("setnext"))
 		return
 
-	var id := StringName(args[0])
+	var id := _resolve(args[0])
 	_reply_result(ctx, director.set_next(id), "Next: %s." % id)
 
 
@@ -346,7 +362,7 @@ func _cmd_nominate_add(ctx: Object) -> void:
 		_reply(ctx, "Usage: %s <name>" % command_name("nominate_add"))
 		return
 
-	var id := StringName(args[0])
+	var id := _resolve(args[0])
 	_reply_result(
 		ctx, director.force_nominate(id, _voter(ctx)), "%s is on the next ballot." % id
 	)

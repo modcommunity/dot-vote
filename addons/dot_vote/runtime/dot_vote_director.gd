@@ -237,6 +237,17 @@ var _runoff_ids: Array[StringName] = []
 ## player's rock-the-vote — does not also ignore an admin's.
 var _forcing: bool = false
 
+## A ballot is due and is waiting for the round in progress to end, under
+## [constant DotVoteRules.Trigger.ROUND_END]. [member _vote_due_reason] says why it is due.
+##
+## [b]This is the whole of what makes `round_end` a different trigger from
+## `time_limit`.[/b] Until it existed the two behaved identically and differed only in
+## what [method DotVoteRules.validate] demanded — a setting that read differently and
+## decided nothing. Under `round_end` a time or score limit reaching its lead does not put
+## a ballot over a fight in progress: it is held here and opened by [method
+## note_round_end], which is the moment a round-based game has always voted at.
+var _vote_due_at_round_end: bool = false
+
 
 func _ready() -> void:
 	if rules == null:
@@ -306,6 +317,7 @@ func begin(id: StringName) -> void:
 	_pending_id = &""
 	_pending_delay = 0.0
 	_vote_due_pending = false
+	_vote_due_at_round_end = false
 	_countdown_remaining = 0.0
 	_runoff_ids.clear()
 	state = State.RUNNING
@@ -383,6 +395,9 @@ func _advance_vote(delta: float) -> void:
 
 
 ## Records the end of a round. Returns whether that ended the current choice.
+##
+## Under [constant DotVoteRules.Trigger.ROUND_END] this is also where a ballot held back
+## by a time or score limit opens — see [member _vote_due_at_round_end].
 func note_round_end() -> bool:
 	var over := clock.note_round_end()
 
@@ -390,7 +405,30 @@ func note_round_end() -> bool:
 		_pending_delay = 0.0
 		_do_change()
 
+	# After the clock, which may itself have made a round-limit ballot due on this very
+	# round end and opened it — in which case the held one is the same ballot and the
+	# flag is cleared by open_vote below rather than opening a second.
+	if _vote_due_at_round_end:
+		_vote_due_at_round_end = false
+
+		if state == State.RUNNING:
+			var opened := start_vote(_vote_due_reason)
+
+			if not opened.ok:
+				# The ordinary retry from here: the round has ended, and a ballot refused
+				# for a cooldown or a head count is owed, not cancelled.
+				_vote_due_pending = true
+
+				DotLog.warn(CHANNEL, "the round ended and the vote could not open yet; will retry", {
+					"reason": String(_vote_due_reason), "why": opened.error.message
+				})
+
 	return over
+
+
+## Whether a ballot is due and waiting for the round in progress to end.
+func is_waiting_for_round_end() -> bool:
+	return _vote_due_at_round_end
 
 
 ## Records the leading score, for [member DotVoteRules.score_limit]. Returns whether
@@ -747,6 +785,7 @@ func open_vote(
 	state = State.VOTING
 	_vote_reason = reason
 	_vote_due_pending = false
+	_vote_due_at_round_end = false
 	_vote_remaining = rules.vote_duration_sec
 	_announce_countdown = rules.announce_interval_sec
 
@@ -1556,6 +1595,23 @@ func _on_vote_due(reason: StringName) -> void:
 	if reason != DotVoteClock.REASON_RTV and not end_vote_enabled():
 		return
 
+	# Under round_end a time or score limit waits for the round to end. A round limit
+	# does not wait — it is only ever due from inside note_round_end, which IS the end of
+	# a round — and neither does a rock-the-vote, which is the players asking now.
+	if (
+		rules.trigger == DotVoteRules.Trigger.ROUND_END
+		and reason != DotVoteClock.REASON_RTV
+		and reason != DotVoteClock.REASON_ROUNDS
+		and not _forcing
+	):
+		_vote_due_at_round_end = true
+		_vote_due_reason = reason
+
+		DotLog.info(CHANNEL, "a vote is due and waits for the round to end", {
+			"reason": String(reason)
+		})
+		return
+
 	var opened := start_vote(reason)
 
 	if not opened.ok:
@@ -1795,6 +1851,9 @@ func describe_lines() -> PackedStringArray:
 	if _vote_due_pending:
 		out.append("due        a vote is owed and could not be opened yet")
 
+	if _vote_due_at_round_end:
+		out.append("due        a vote opens when this round ends (%s)" % String(_vote_due_reason))
+
 	out.append("next       %s" % String(_next_in_rotation()))
 
 	return out
@@ -1818,6 +1877,7 @@ func describe() -> Dictionary:
 		"ballot": ballot.describe(),
 		"nominations": nominations.size(),
 		"end_vote": end_vote_enabled(),
+		"waiting_for_round_end": _vote_due_at_round_end,
 		"pending": String(_pending_id) if _pending_id != &"" else "-",
 		"history": history.describe(),
 		"source": source.describe() if source != null else {},

@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 345
+const CHECKS := 358
 
 var _passed := 0
 var _failed := 0
@@ -65,6 +65,7 @@ func _run() -> void:
 	_test_chooser_settings()
 	_test_countdown()
 	_test_score_limit()
+	_test_round_end_trigger()
 	_test_lead_fraction()
 	_test_ballot_options()
 	_test_rtv_parity()
@@ -1980,6 +1981,111 @@ func _test_score_limit() -> void:
 	_done()
 
 
+func _test_round_end_trigger() -> void:
+	_section("round_end holds a time or score ballot for the end of the round; time_limit does not")
+
+	var rules := _rules()
+	rules.trigger = DotVoteRules.Trigger.ROUND_END
+	rules.duration_sec = 600.0
+	rules.round_limit = 0
+	rules.vote_lead_sec = 60.0
+
+	_check(
+		rules.validate().ok,
+		"round_end with a time limit and no round limit validates",
+		"it used to be refused: round_end demanded a round limit and did nothing else"
+	)
+
+	var none := _rules()
+	none.trigger = DotVoteRules.Trigger.ROUND_END
+	none.duration_sec = 0.0
+	none.round_limit = 0
+	none.score_limit = 0
+	_check(not none.validate().ok, "round_end with no limit at all is still refused")
+
+	var source := DotVoteListSource.of(_choices(["a", "b", "c"]))
+	var held := _make_director(rules, source)
+	held.rules.include_extend = false
+	held.begin(&"a")
+	held.advance(545.0)
+
+	_check(
+		not held.is_voting() and held.is_waiting_for_round_end(),
+		"inside the lead, round_end waits for the round rather than opening mid-fight"
+	)
+	_check(
+		"\n".join(held.describe_lines()).contains("round ends"),
+		"and says so in describe", str(held.describe_lines())
+	)
+
+	held.advance(60.0)
+	_check(
+		not held.is_voting(),
+		"even once the time is up: the round in progress is finished first"
+	)
+
+	held.note_round_end()
+	_check(
+		held.is_voting() and not held.is_waiting_for_round_end(),
+		"and the round ending opens the ballot"
+	)
+
+	# The control. The same clock under time_limit opens at the lead, mid-round — which is
+	# the difference this section exists to prove is real, and was not before.
+	var timed_rules := _rules()
+	timed_rules.trigger = DotVoteRules.Trigger.TIME_LIMIT
+	timed_rules.duration_sec = 600.0
+	timed_rules.vote_lead_sec = 60.0
+	var timed := _make_director(timed_rules, DotVoteListSource.of(_choices(["a", "b", "c"])))
+	timed.rules.include_extend = false
+	timed.begin(&"a")
+	timed.advance(545.0)
+	_check(
+		timed.is_voting() and not timed.is_waiting_for_round_end(),
+		"under time_limit the same clock opens the ballot at the lead, with no round ended"
+	)
+
+	# A score limit is held the same way.
+	var scored_rules := _rules()
+	scored_rules.trigger = DotVoteRules.Trigger.ROUND_END
+	scored_rules.duration_sec = 0.0
+	scored_rules.score_limit = 20
+	scored_rules.vote_lead_score = 2
+	var scored := _make_director(scored_rules, DotVoteListSource.of(_choices(["a", "b"])))
+	scored.rules.include_extend = false
+	scored.begin(&"a")
+	scored.note_score(19)
+	_check(
+		not scored.is_voting() and scored.is_waiting_for_round_end(),
+		"a score inside its lead waits for the round too"
+	)
+	scored.note_round_end()
+	_check(scored.is_voting(), "and opens when it ends")
+
+	# A rock-the-vote does not wait: that is the players asking now.
+	var rocked_rules := _rules()
+	rocked_rules.trigger = DotVoteRules.Trigger.ROUND_END
+	rocked_rules.round_limit = 5
+	rocked_rules.rtv_delay_sec = 0.0
+	rocked_rules.rtv_min_players = 1
+	rocked_rules.rtv_fraction = 0.25
+	var rocked := _make_director(rocked_rules, DotVoteListSource.of(_choices(["a", "b"])))
+	rocked.begin(&"a")
+	rocked.rock_the_vote(&"p1")
+	_check(rocked.is_voting(), "a rock-the-vote under round_end opens at once")
+
+	# A new map forgets a held ballot: it was owed to the one that just ended.
+	held.close_vote()
+	held.begin(&"b")
+	_check(not held.is_waiting_for_round_end(), "and a new choice forgets a held ballot")
+
+	held.queue_free()
+	timed.queue_free()
+	scored.queue_free()
+	rocked.queue_free()
+	_done()
+
+
 func _test_lead_fraction() -> void:
 	_section("The ballot can open at a fraction of the limit rather than a fixed lead")
 
@@ -2947,6 +3053,27 @@ func _test_real_game_manager() -> void:
 			and console.call("find_command", "nominate_addmap") != null
 			and console.call("find_command", "votereload") != null,
 		"including forcing a rock-the-vote, adding a nomination and reloading the list"
+	)
+
+	# What a player types is resolved before it reaches the director. Arena's ids carry a
+	# `map:` prefix nobody types; without resolve_fn a bare name is an id nothing has.
+	var resolving := DotVoteCommands.new()
+	resolving.director = director
+	resolving.prefix = "t_"
+	resolving.resolve_fn = func(text: String) -> StringName:
+		return StringName("world_" + text)
+	resolving.bind(console)
+
+	console.call("execute", "t_unnominate a", ctx)
+	_check(
+		not director.nominated_ids().has(&"world_a"),
+		"a bare name withdraws the nomination it resolves to"
+	)
+	console.call("execute", "t_nominate a", ctx)
+	_check(
+		director.nominated_ids().has(&"world_a"),
+		"and nominates it, through resolve_fn (%s)" % str(director.nominated_ids()),
+		"without it `a` is an id no source has, and the command refuses what a player typed"
 	)
 
 	var renamed := DotVoteCommands.new()

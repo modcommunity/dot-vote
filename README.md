@@ -87,7 +87,7 @@ A source that cannot change anything is legitimate: the director runs the whole 
 ## Configuring it
 
 ```yaml
-trigger: time_limit
+trigger: time_limit          # round_end holds a time or score ballot until the round ends
 duration_sec: 1800
 end_vote: true               # a vote for the next map when this one runs out
 vote_lead_sec: 120           # the ballot opens two minutes before the end
@@ -139,7 +139,7 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-345 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
+358 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
 
 ## Dependencies
 
