@@ -42,14 +42,30 @@ stale.
 
 | To change | Where |
 | --- | --- |
-| Any policy at all | `DotVoteRules` — 55 settings, layered like every `DotConfig` |
+| Any policy at all | `DotVoteRules` — 80 settings, layered like every `DotConfig` |
+| A game's own defaults, under an operator's file | `DotVoteRules.layer_over_defaults(file, DotVoteGameSource.running_game_metadata("map_vote"))` |
 | What can be voted for | `DotVoteSource` subclass, or `DotVoteListSource` with a `Callable` |
 | How many players there are, who is an admin, who is a spectator | `DotVoteDirector.player_count_fn` / `is_admin_fn` / `is_spectator_fn` |
 | What one player's vote is worth | `DotVoteDirector.weight_fn` |
 | What the players are told | `DotVoteDirector.announce_fn` |
+| What they hear | `DotVoteDirector.cue` (a signal carrying a `cue_*` id) |
+| A countdown on a HUD | `DotVoteDirector.countdown_started` / `countdown_tick` |
+| Whether another vote is on screen | `DotVoteDirector.busy_fn` |
+| The leading score, for a score limit | `DotVoteDirector.note_score` |
 | Whether this addon changes anything at all | `DotVoteDirector.auto_apply`, or a source with no apply |
 | Command names | `DotVoteCommands.prefix` / `names` |
 | How a command context becomes a voter | `DotVoteCommands.voter_fn` |
+
+## Parity with the community map-choosers
+
+[docs/parity.md](docs/parity.md) is every setting, command, query and event of the long-standing community map-chooser plugins — the end-of-map chooser, rock-the-vote, nominations and the sounds layer — against what covers it here. Twenty-four settings, four admin commands, twelve queries and five signals were added to close it. Read it before adding a setting: the row may already exist under another name, and the "deliberately not" rows say why.
+
+Four things about that work are worth keeping in front of you:
+
+- **Two "carry on"s.** After an end-of-map ballot that changes nothing the clock restarts, or the next tick expires it again. After a rock-the-vote ballot that changes nothing it RESUMES (`DotVoteClock.resume`), because a restart hands an unpopular map a fresh limit for having been voted on — which is what "don't change" used to do. `DotVoteDirector._carry_on` is the one place that decides, from the reason the ballot opened.
+- **A pending change carries its own moment.** `_pending_moment` rather than `rules.apply` read at apply time, because an end-of-map winner, a rock-the-vote winner (`rtv_apply`) and an admin's `set_next` each wait for something different.
+- **Presentation is not policy.** `option_ids()` is the order a player sees and a typed number indexes; `countable_ids()` is choices-first, always, and is what ties are broken in. `pseudo_options_first` moving "don't change" to the top of a menu must not make every tie go to the status quo.
+- **Every new check was armed.** The runoff-line tie, the clock resuming, the rtv interval and the end-vote switch were each broken on purpose and the suite re-run; each fired, and so did the settings sweep, on its own, for the setting whose only reader had been removed.
 
 ## Bugs found by building it
 
@@ -96,6 +112,14 @@ All five parsed cleanly. Three are the family's own recurring shapes.
   to decide it is not awaiting anything. The self-test drives a real `DotGameManager`
   through it for that reason.
 
+Found by the parity work, 2026-09-23:
+
+- **`trigger: rtv_only` opened a ballot at the lead anyway.** The clock fires `vote_due` for a time limit whatever the trigger, and only MANUAL was checked; `_on_expired`'s rotation branch for RTV_ONLY was unreachable on any server with a clock. The fix is `end_vote_enabled()`, which is also what the new `end_vote` switch turns off.
+- **Every admin vote command was root-only.** `DotVoteCommands.admin_permission` was `"changelevel"` — a command's name, not a flag anybody holds — and `DotAdminFlags.granted` matches exactly. It is `"changemap"` now, which is `DotAdminFlags.CHANGEMAP`, spelled out because this file cannot name dot-server's classes.
+- **"Extend" stayed on the ballot after the extensions were used up**, and winning with it produced "This cannot be extended again" and a restarted clock. `DotVoteBallot.extend_available` is set from the clock when a ballot opens.
+- **A nomination made while a ballot was open was accepted and then thrown away** by the change that ballot caused. `nomination_state()` refuses it and says why.
+- **`trigger: time_limit` and `trigger: round_end` behave identically at runtime** — both limits fire whichever the trigger — and differ only in what `validate()` demands. Recorded rather than changed: every game sets one of the two and no behaviour depends on the difference, but it is the shape of a setting that reads differently and decides nothing, and the next person to add a trigger should know.
+
 And one process hazard, which is already in the family CLAUDE.md and was hit anyway:
 `==` binds tighter than `as`, so `a == [x] as Array[StringName]` parses as
 `(a == [x]) as Array[StringName]` and fails to compile — **and a scene whose script
@@ -117,8 +141,11 @@ fails to parse hangs rather than failing.** Run `--check-only` before running a 
 - **No per-choice permissions.** dot-map has `nominate_permission` on a map def and
   this deliberately does not copy it: whether a player may nominate something is a
   question about the player, and the host answers it before calling `nominate`.
-- **Nothing draws, announces or counts down on its own.** `announce_fn` takes a
-  string. What a server says, and where, is not this addon's opinion.
+- **Nothing draws or plays on its own.** `announce_fn` takes a string and `cue` carries an
+  id. What a server says and plays, and where, is not this addon's opinion — the
+  countdown is counted here and drawn by the host.
+- **No dependency on dot-audio.** The `cue_*` settings are ids and the signal hands them
+  over; a sound set is a different set of ids in the rules file.
 
 ## Validating
 
@@ -130,10 +157,10 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-231 checks, non-zero on failure. Three sections matter more than the rest:
+344 checks, non-zero on failure. Three sections matter more than the rest:
 
 - **"Every setting is read by something"** runs this family's own mechanical detector
-  over `DotVoteRules` — 55 settings in one resource is either this addon's best
+  over `DotVoteRules` — 80 settings in one resource is either this addon's best
   feature or twenty-six instances of the family's most repeated bug, and the check is
   the difference. It matches `rules.<key>` across the addon and bare identifiers
   inside the rules themselves, rather than any occurrence: `DotVoteChoice` has an

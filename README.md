@@ -38,12 +38,15 @@ That is the whole integration. Everything else is configuration.
 | --- | --- |
 | **Rock the vote** | A fraction of the players, with a minimum player count, a delay at the start of every map, idempotent per player, and votes withdrawn when their owner disconnects. |
 | **Nominations** | Per-player caps, a total cap, seconding (so "most nominated" means something), admin bypass, and reserved places on the ballot so three organised players cannot decide every map. |
-| **Time limits** | In seconds, in rounds, or both, **per choice**, so a forty-minute surf map and a ten-minute bhop map are not forced under one number. Multiple warnings, extending with a cap. |
-| **The ballot** | Up to N options, filled five ways, with "extend" and "none of these" as options a server can turn on or off. Opens a configurable lead time *before* the map ends, so the change happens on time. |
+| **Time limits** | In seconds, in rounds, in score, or all three, **per choice**, so a forty-minute surf map and a ten-minute bhop map are not forced under one number. Multiple warnings, extending with a cap. |
+| **The end-of-map vote** | One switch (`end_vote`). The ballot opens a fixed lead before the end, or at a fraction of the limit, with an optional counted-down warning. "Extend" adds a configurable amount of time, rounds and score, and leaves the ballot once the extensions are used up. |
+| **The ballot** | Up to N options, filled five ways, with "extend", "don't change" and "no vote" as options a server can turn on or off, placed first or last, optionally shuffled, and custom maps marked. Opens a configurable lead time *before* the map ends, so the change happens on time. |
 | **Counting** | Plurality, approval, instant runoff, or a majority runoff. Quorums, weighted ballots, and five tie-breaks, four of which a player watching can predict. |
 | **Cooldowns** | In plays or in wall-clock minutes, per choice, clamped against the pool so a long cooldown on a short rotation cannot exclude everything. |
-| **Applying** | Immediately, at the end of the round, or when the clock runs out, with a delay so players can read the result. |
-| **Commands** | `nominate`, `rtv`, `votefor`, `timeleft`, `nextmap`, `revote`, `extend`, `endvote`, and more, on a dot-server console and in chat. Every name configurable. |
+| **Applying** | Immediately, at the end of the round, or when the clock runs out — separately for the end-of-map ballot and for a rock-the-vote one — with a delay so players can read the result. |
+| **Countdowns and cues** | A per-second countdown signal before a ballot and before a runoff, and sound cue ids for the start, the end, the warning and each second. Ids only: the host plays them, through dot-audio or anything else. |
+| **Commands** | `nominate`, `rtv`, `votefor`, `timeleft`, `nextmap`, `revote`, `extend`, `endvote`, `setnextmap`, `nominate_addmap`, `forcertv`, `votereload`, and more, on a dot-server console and in chat. Every name configurable; the admin ones need the `changemap` flag. |
+| **Asking** | Whether a player may nominate and why not, what may be nominated, what is excluded, what is nominated and by whom, whether the end vote has finished, whether a vote could start, whether a choice is official. |
 
 ## The pieces
 
@@ -86,8 +89,14 @@ A source that cannot change anything is legitimate: the director runs the whole 
 ```yaml
 trigger: time_limit
 duration_sec: 1800
+end_vote: true               # a vote for the next map when this one runs out
 vote_lead_sec: 120           # the ballot opens two minutes before the end
+vote_warning_sec: 10         # after a ten-second countdown
 warn_at_sec: "300,60,30"
+
+include_extend: true         # "extend this map" is on the ballot
+extend_seconds: 900          # by fifteen minutes
+max_extends: 2               # at most twice
 
 rtv_fraction: 0.6
 rtv_min_players: 2
@@ -106,7 +115,19 @@ apply: end_of_round
 apply_delay_sec: 5
 ```
 
-Fifty-five settings, and the self-test fails if any one of them is read by nothing.
+Eighty settings, and the self-test fails if any one of them is read by nothing. [docs/parity.md](docs/parity.md) maps every setting, command and hook of the long-standing community map-chooser plugins onto these, row by row.
+
+A game that builds its rules in code layers an operator's file over them in one call — its own defaults, then the running game's `game.yml` metadata, then the file, then `DOT_VOTE_*`, then `--vote-*`:
+
+```gdscript
+var rules := my_default_rules()
+var layered := rules.layer_over_defaults(
+    "user://cfg/my_game_vote.json",
+    DotVoteGameSource.running_game_metadata("map_vote"),
+)
+```
+
+A result that does not validate is refused whole, and the game keeps its own defaults.
 
 ## Validating it
 
@@ -118,7 +139,7 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-231 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
+344 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
 
 ## Dependencies
 
