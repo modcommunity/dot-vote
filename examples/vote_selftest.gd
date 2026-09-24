@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 371
+const CHECKS := 373
 
 var _passed := 0
 var _failed := 0
@@ -2084,6 +2084,28 @@ func _test_round_end_trigger() -> void:
 	timed.queue_free()
 	scored.queue_free()
 	rocked.queue_free()
+
+	# A host that feeds neither rounds nor scores takes out what it cannot drive, rather
+	# than wait for a round end that never comes under an operator's `trigger: round_end`.
+	var unfed := DotVoteRules.new()
+	unfed.trigger = DotVoteRules.Trigger.ROUND_END
+	unfed.round_limit = 4
+	unfed.score_limit = 30
+	unfed.apply = DotVoteRules.Apply.END_OF_ROUND
+	unfed.rtv_apply = DotVoteRules.Apply.END_OF_ROUND
+	var dropped := unfed.drop_unfed(false, false)
+	_check(
+		unfed.trigger == DotVoteRules.Trigger.TIME_LIMIT and unfed.round_limit == 0
+			and unfed.score_limit == 0 and unfed.apply == DotVoteRules.Apply.IMMEDIATE
+			and unfed.rtv_apply == DotVoteRules.Apply.IMMEDIATE and dropped.size() == 5,
+		"a host that feeds no rounds or scores drops what it cannot drive, and says what",
+		", ".join(dropped)
+	)
+	var fed := DotVoteRules.new()
+	fed.trigger = DotVoteRules.Trigger.SCORE_LIMIT
+	fed.score_limit = 30
+	_check(fed.drop_unfed(true, true).is_empty() and fed.score_limit == 30,
+		"and one that feeds them keeps every setting")
 	_done()
 
 

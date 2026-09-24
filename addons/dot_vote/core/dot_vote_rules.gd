@@ -819,6 +819,47 @@ func layer_over_defaults(file_path: String, overlay: Dictionary = {}) -> DotResu
 	return loaded
 
 
+## Takes out what a host cannot drive, and says what it took.
+##
+## [b]Every setting here layers from a file an operator writes[/b], and some of them only
+## mean something if the host feeds the clock: a round trigger or limit needs
+## [method DotVoteDirector.note_round_end], a score one [method DotVoteDirector.note_score].
+## A game that calls neither and is handed `trigger: round_end` validates perfectly and
+## then waits for a round end that never comes — and with the map's own clock handed to
+## the vote, the map never ends. So a host that knows what it feeds says so here, after
+## layering, and logs what came back at ERROR.
+##
+## Round and score triggers fall back to [constant Trigger.TIME_LIMIT]; the limits to 0;
+## and applying at the end of a round, with no rounds, to [constant Apply.IMMEDIATE] —
+## otherwise a won rock-the-vote under a vote with no clock would be pending for ever.
+func drop_unfed(feeds_rounds: bool, feeds_score: bool) -> PackedStringArray:
+	var dropped := PackedStringArray()
+
+	if not feeds_rounds:
+		if trigger == Trigger.ROUND_END:
+			trigger = Trigger.TIME_LIMIT
+			dropped.append("trigger: round_end")
+		if round_limit > 0:
+			dropped.append("round_limit: %d" % round_limit)
+			round_limit = 0
+		if apply == Apply.END_OF_ROUND:
+			apply = Apply.IMMEDIATE
+			dropped.append("apply: end_of_round")
+		if rtv_apply == Apply.END_OF_ROUND:
+			rtv_apply = Apply.IMMEDIATE
+			dropped.append("rtv_apply: end_of_round")
+
+	if not feeds_score:
+		if trigger == Trigger.SCORE_LIMIT:
+			trigger = Trigger.TIME_LIMIT
+			dropped.append("trigger: score_limit")
+		if score_limit > 0:
+			dropped.append("score_limit: %d" % score_limit)
+			score_limit = 0
+
+	return dropped
+
+
 func validate() -> DotResult:
 	if max_options < 2:
 		return DotResult.fail(
