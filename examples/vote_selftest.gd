@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 358
+const CHECKS := 371
 
 var _passed := 0
 var _failed := 0
@@ -72,6 +72,7 @@ func _run() -> void:
 	_test_end_vote_switch()
 	_test_no_votes()
 	_test_admin_and_queries()
+	_test_clock_view()
 	_test_every_setting_is_read()
 	await _test_real_game_manager()
 	await _test_real_map_catalogue()
@@ -2560,6 +2561,92 @@ func _test_no_votes() -> void:
 				)
 
 		director.queue_free()
+
+	_done()
+
+
+func _test_clock_view() -> void:
+	_section("A client's view of the clock follows an extend, and shows none when there is none")
+
+	var view := DotVoteClockView.new()
+	_check(
+		not view.known and view.formatted_at(0.0) == "",
+		"a view never told anything shows nothing"
+	)
+	_check(
+		not bool(DotVoteClockView.state_of(null)["has_clock"]),
+		"a server with no vote has no clock to show"
+	)
+
+	var source := DotVoteListSource.of(_choices(["a", "b", "c"]))
+	var rules := _rules()
+	rules.duration_sec = 300.0
+	rules.vote_lead_sec = 30.0
+	rules.extend_seconds = 120.0
+	var director := _make_director(rules, source)
+	director.self_advance = false
+	director.begin(&"a")
+
+	_check(view.is_stale(director, 0.0), "and is stale against a running clock")
+	view.adopt(DotVoteClockView.state_of(director), 0.0)
+	_check(
+		view.has_clock and view.running and view.formatted_at(0.0) == "5:00",
+		"adopted, it shows the clock's own limit (%s)" % view.formatted_at(0.0)
+	)
+	_check(
+		view.formatted_at(10.0) == "4:50",
+		"and counts itself down between messages (%s)" % view.formatted_at(10.0)
+	)
+
+	for i in range(10):
+		director.advance(1.0)
+
+	_check(
+		not view.is_stale(director, 10.0),
+		"ten seconds on, both ends agree and nothing needs sending"
+	)
+
+	_check(director.clock.extend(), "the clock is extended")
+	_check(
+		view.is_stale(director, 10.0),
+		"which makes the view stale",
+		"a client would go on showing the old limit"
+	)
+	view.adopt(DotVoteClockView.state_of(director), 10.0)
+	_check(
+		view.formatted_at(10.0) == "6:50",
+		"and once re-sent it shows the extension (%s)" % view.formatted_at(10.0)
+	)
+
+	director.clock.stop()
+	_check(view.is_stale(director, 11.0), "a clock that stops is stale too")
+	view.adopt(DotVoteClockView.state_of(director), 11.0)
+	_check(
+		view.formatted_at(40.0) == view.formatted_at(11.0),
+		"and a stopped clock holds still on the client (%s)" % view.formatted_at(40.0)
+	)
+
+	var none := _rules()
+	none.duration_sec = 0.0
+	none.trigger = DotVoteRules.Trigger.RTV_ONLY
+	var clockless := _make_director(none, DotVoteListSource.of(_choices(["a", "b"])))
+	clockless.begin(&"a")
+	var told := DotVoteClockView.new()
+	told.adopt(DotVoteClockView.state_of(clockless), 0.0)
+	_check(
+		told.known and not told.has_clock and told.formatted_at(0.0) == "",
+		"an rtv-only vote with no limit is told, and shows no clock"
+	)
+
+	var manual := _rules()
+	manual.duration_sec = 600.0
+	manual.trigger = DotVoteRules.Trigger.MANUAL
+	var host_decides := _make_director(manual, DotVoteListSource.of(_choices(["a", "b"])))
+	host_decides.begin(&"a")
+	_check(
+		not bool(DotVoteClockView.state_of(host_decides)["has_clock"]),
+		"nor does a manual one, whose count reaching zero ends nothing"
+	)
 
 	_done()
 

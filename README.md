@@ -57,6 +57,7 @@ That is the whole integration. Everything else is configuration.
 | `DotVoteSource` | Where the choices come from and what "play this" means. The one seam. |
 | `DotVoteDirector` | The `Node` that joins them, driven by one `advance(delta)` per tick. |
 | `DotVoteClock` | The limit, the warnings, the extends and the rock-the-vote. |
+| `DotVoteClockView` | The clock as a client shows it: a state a server sends when it changes, counted down in between, and empty when there is no limit. |
 | `DotVoteBallot` | The open ballot and the four counting methods. |
 | `DotVoteNominations` | What players have asked for, in order. |
 | `DotVoteHistory` | What has been played, and what is still on cooldown. |
@@ -139,7 +140,7 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-358 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
+371 checks. The last two sections run this addon against a real `DotGameManager` and a real `DotMapCatalogue` and change what they are running, because "the two ends have never met" is how the expensive bugs in this family start.
 
 ## Dependencies
 

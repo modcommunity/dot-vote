@@ -50,6 +50,7 @@ stale.
 | What the players are told | `DotVoteDirector.announce_fn` |
 | What they hear | `DotVoteDirector.cue` (a signal carrying a `cue_*` id) |
 | A countdown on a HUD | `DotVoteDirector.countdown_started` / `countdown_tick` |
+| The time left on a client's HUD | `DotVoteClockView` — `state_of(director)` on the server, sent when `is_stale`; `adopt` and `formatted_at` on the client |
 | Whether another vote is on screen | `DotVoteDirector.busy_fn` |
 | The leading score, for a score limit | `DotVoteDirector.note_score` |
 | Whether this addon changes anything at all | `DotVoteDirector.auto_apply`, or a source with no apply |
@@ -158,7 +159,7 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-358 checks, non-zero on failure. Three sections matter more than the rest:
+371 checks, non-zero on failure. Three sections matter more than the rest:
 
 - **"Every setting is read by something"** runs this family's own mechanical detector
   over `DotVoteRules` — 80 settings in one resource is either this addon's best
