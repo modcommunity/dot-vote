@@ -38,6 +38,15 @@ extends RefCounted
 ## whole seconds and a client that rounds the other way is a second out and not wrong.
 const STALE_TOLERANCE_SEC := 1.5
 
+## Seconds after which a running clock is sent again even though it agrees.
+##
+## [b]The two ends count on different clocks[/b] — a server in simulated time, a client in
+## wall time — and [method is_stale] only ever compares the server with itself. A server
+## that falls behind real time (a slow tick, a paused process) therefore has clients
+## counting ahead of it that nothing corrects, however long the map runs. One small
+## message every half minute bounds that drift; a quiet map still sends nothing else.
+const RESYNC_SEC := 30.0
+
 ## Whether anything has been adopted. False is "never told", which a HUD answers
 ## differently from "told there is no clock".
 var known: bool = false
@@ -138,6 +147,9 @@ func is_stale(director: DotVoteDirector, now: float) -> bool:
 
 	if not has_clock:
 		return false
+
+	if running and now - _at >= RESYNC_SEC:
+		return true
 
 	return absf(float(truth["seconds_left"]) - remaining_at(now)) > STALE_TOLERANCE_SEC
 

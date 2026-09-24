@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 373
+const CHECKS := 374
 
 var _passed := 0
 var _failed := 0
@@ -2627,6 +2627,24 @@ func _test_clock_view() -> void:
 		not view.is_stale(director, 10.0),
 		"ten seconds on, both ends agree and nothing needs sending"
 	)
+
+	# And a running clock that agrees is still re-sent every RESYNC_SEC, because the two
+	# ends count on different clocks and nothing else would correct a server that fell
+	# behind real time. A separate director, so the extension below starts from ten.
+	var steady := _make_director(rules, DotVoteListSource.of(_choices(["a", "b"])))
+	steady.self_advance = false
+	steady.begin(&"a")
+	var steady_view := DotVoteClockView.new()
+	steady_view.adopt(DotVoteClockView.state_of(steady), 0.0)
+	for i in range(29):
+		steady.advance(1.0)
+	var quiet_at_29 := not steady_view.is_stale(steady, 29.0)
+	steady.advance(1.0)
+	_check(
+		quiet_at_29 and steady_view.is_stale(steady, DotVoteClockView.RESYNC_SEC),
+		"a clock that agrees stays quiet, and is re-sent every %d s anyway" % int(DotVoteClockView.RESYNC_SEC)
+	)
+	steady.queue_free()
 
 	_check(director.clock.extend(), "the clock is extended")
 	_check(
