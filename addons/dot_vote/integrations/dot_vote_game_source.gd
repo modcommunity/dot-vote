@@ -45,14 +45,17 @@ var excluded: Array[StringName] = []
 
 
 static func of(p_manager: Object) -> DotVoteGameSource:
-	var source := DotVoteGameSource.new()
+	# Not this class's own name. A script that names itself in an expression, loaded after
+	# its base, cuts Godot 4.7.2's exit teardown short and leaks every script loaded before
+	# it. See docs/gdscript-hazards.md, "A script that names itself".
+	var source := new()
 	source.manager = p_manager
 	return source
 
 
 ## Finds the game manager in [DotRegistry], for a host that has one but no reference.
 static func from_registry() -> DotVoteGameSource:
-	return DotVoteGameSource.of(DotRegistry.get_service(&"dot_game_manager"))
+	return of(DotRegistry.get_service(&"dot_game_manager"))
 
 
 ## What the RUNNING game's descriptor carries under [param key], or an empty dictionary.

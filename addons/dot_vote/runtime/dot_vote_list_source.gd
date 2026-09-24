@@ -40,14 +40,17 @@ var loaded_from: String = ""
 
 
 static func of(choices: Array[DotVoteChoice]) -> DotVoteListSource:
-	var source := DotVoteListSource.new()
+	# Not this class's own name. A script that names itself in an expression, loaded after
+	# its base, cuts Godot 4.7.2's exit teardown short and leaks every script loaded before
+	# it. See docs/gdscript-hazards.md, "A script that names itself".
+	var source := new()
 	source.entries = choices.duplicate()
 	return source
 
 
 ## Builds one from ids alone, for a server whose choices need no configuration.
 static func of_ids(ids: Array) -> DotVoteListSource:
-	var source := DotVoteListSource.new()
+	var source := new()
 
 	for id: Variant in ids:
 		source.entries.append(DotVoteChoice.of(StringName(str(id))))

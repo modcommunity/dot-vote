@@ -52,7 +52,10 @@ var excluded: Array[StringName] = []
 
 
 static func of(p_catalogue: Object, p_session: Object = null) -> DotVoteMapSource:
-	var source := DotVoteMapSource.new()
+	# Not this class's own name. A script that names itself in an expression, loaded after
+	# its base, cuts Godot 4.7.2's exit teardown short and leaks every script loaded before
+	# it. See docs/gdscript-hazards.md, "A script that names itself".
+	var source := new()
 	source.catalogue = p_catalogue
 	source.session = p_session
 	return source
@@ -61,9 +64,9 @@ static func of(p_catalogue: Object, p_session: Object = null) -> DotVoteMapSourc
 ## Builds one from a [code]DotMapSession[/code] alone, taking its catalogue.
 static func from_session(p_session: Object) -> DotVoteMapSource:
 	if p_session == null:
-		return DotVoteMapSource.of(null, null)
+		return of(null, null)
 
-	return DotVoteMapSource.of(p_session.get("catalogue") as Object, p_session)
+	return of(p_session.get("catalogue") as Object, p_session)
 
 
 func source_name() -> String:
