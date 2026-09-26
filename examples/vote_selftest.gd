@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 374
+const CHECKS := 387
 
 var _passed := 0
 var _failed := 0
@@ -74,6 +74,7 @@ func _run() -> void:
 	_test_admin_and_queries()
 	_test_clock_view()
 	_test_every_setting_is_read()
+	_test_every_layer_reaches_a_ballot()
 	await _test_real_game_manager()
 	await _test_real_map_catalogue()
 
@@ -2477,6 +2478,91 @@ func _test_rtv_parity() -> void:
 	denier.queue_free()
 	forcer.queue_free()
 	decided.queue_free()
+	_done()
+
+
+## `end_vote`, `include_extend` and `extend_seconds`, each set through each of the four
+## layers a game reads, change what a running director's ballot does.
+##
+## [b]Through a child process, all four[/b], because the command line is the process's own
+## (`examples/layer_probe.gd` says why). What is asserted is the BALLOT, not the parsed
+## value: no ballot at the lead, no Extend on it, and the clock moving by the layered
+## number when Extend wins. `[mce-1]` asked for exactly this and nothing had it: the
+## settings were proven against a running ballot only when set in code, and three of the
+## twenty-one layer-by-setting pairs were checked as a parsed value.
+func _test_every_layer_reaches_a_ballot() -> void:
+	_section("Every config layer reaches a running ballot, the command line in a child process")
+
+	var project := ProjectSettings.globalize_path("res://")
+	var file_path := ProjectSettings.globalize_path(DATA + "/probe_vote.json")
+	var _made := DirAccess.make_dir_recursive_absolute(file_path.get_base_dir())
+
+	var probe := func(extra: PackedStringArray, env: Dictionary) -> Dictionary:
+		for key: String in env:
+			OS.set_environment(key, env[key])
+		var args := PackedStringArray([
+			"--headless", "--path", project, "--script", "res://examples/layer_probe.gd", "--",
+		])
+		args.append_array(extra)
+		var out := []
+		var _code := OS.execute(OS.get_executable_path(), args, out, true)
+		for key: String in env:
+			OS.unset_environment(key)
+		var found := {}
+		for line: String in "\n".join(PackedStringArray(out)).split("\n"):
+			var parsed: Variant = JSON.parse_string(line.strip_edges()) \
+				if line.strip_edges().begins_with("{") else null
+			if parsed is Dictionary:
+				found = parsed
+		return found
+
+	var control: Dictionary = probe.call(PackedStringArray(), {})
+	_check(
+		control.get("opened") == true and control.get("extend_offered") == true
+			and is_equal_approx(float(control.get("extended_by", -1.0)), 600.0),
+		"with no layer, a ballot opens at the lead, offers Extend, and Extend adds 600 s",
+		str(control)
+	)
+
+	# [setting, value as a layer writes it, what the ballot shows, what it should show]
+	var cases := [
+		["end_vote", "false", false, "opened", false],
+		["include_extend", "false", false, "extend_offered", false],
+		["extend_seconds", "90", 90, "extended_by", 90.0],
+	]
+
+	for case: Array in cases:
+		var key: String = case[0]
+
+		for layer in ["game.yml metadata", "the JSON file", "DOT_VOTE_*", "--vote-*"]:
+			var extra := PackedStringArray()
+			var env := {}
+
+			match layer:
+				"game.yml metadata":
+					extra.append("--probe-meta-%s=%s" % [key, JSON.stringify(case[2])])
+				"the JSON file":
+					var f := FileAccess.open(file_path, FileAccess.WRITE)
+					f.store_string(JSON.stringify({key: case[2]}))
+					f.close()
+					extra.append("--probe-file=" + file_path)
+				"DOT_VOTE_*":
+					env["DOT_VOTE_" + key.to_upper()] = case[1]
+				"--vote-*":
+					extra.append("--vote-%s=%s" % [key, case[1]])
+
+			var got: Dictionary = probe.call(extra, env)
+			var seen: Variant = got.get(case[3])
+			var want: Variant = case[4]
+			var same: bool = is_equal_approx(float(seen), float(want)) \
+				if want is float else seen == want
+			_check(
+				got.get("layered") == true and same,
+				"%s from %s: the ballot's %s is %s" % [key, layer, case[3], str(want)],
+				str(got)
+			)
+
+	var _gone := DirAccess.remove_absolute(file_path)
 	_done()
 
 
