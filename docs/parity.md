@@ -16,7 +16,7 @@ Legend: **have** — it was already here; **new** — added for parity; **differ
 | `mce_startround` | `vote_lead_rounds` | have. |
 | `mce_startfrags` | `vote_lead_score` with `score_limit` | **new**. A generic score the host reports through `DotVoteDirector.note_score` — frags, team wins, points. `trigger: score_limit` for a game whose only limit is a score. |
 | `mp_winlimit` / `mp_maxrounds` / `mp_fraglimit` (read by the chooser) | `round_limit`, `score_limit`, `duration_sec` | have / **new**. The limits are the vote's own, with per-choice overrides for time and rounds. |
-| `mce_extend` | `include_extend`, `max_extends` | have. Note the old `0` meant "no extends"; here `max_extends: 0` is unlimited and `include_extend: false` is none. "Extend" now leaves the ballot once the extensions are used up (**new**; it used to be offered and then refused). |
+| `mce_extend` | `include_extend`, `max_extends` | have. Note the old `0` meant "no extends"; here `max_extends: 0` is unlimited and `include_extend: false` is none. "Extend" leaves the ballot once the extensions are used up, as the plugin's does (`mapchooser_extended.sp` checks the extend count before adding it); **new here** in the sense that dot-vote's own first version offered it and then refused it. |
 | `mce_extend_timestep` | `extend_seconds` | have. Seconds, not minutes. |
 | `mce_extend_roundstep` | `extend_rounds` | have. |
 | `mce_extend_fragstep` | `extend_score` | **new**. `score_limit_changed` tells a host that enforces its own limit. |
@@ -68,7 +68,7 @@ Legend: **have** — it was already here; **new** — added for parity; **differ
 | One per player, replaced | `nominations_per_player: 1` | have. |
 | List full (capped at the ballot size) | `nominations_max`, `nomination_slots` | have, **different**: the list and the ballot places are two numbers. |
 | Duplicates refused | `nomination_seconding: false` | have, **different**: seconding is on by default, because `fill: most_nominated` needs it. |
-| Nominations dropped on disconnect | `nominations_forget_leavers` | **new**, off by default — a nomination is a request of the server. |
+| Nominations dropped on disconnect | `nominations_forget_leavers` | **different**: the plugin always drops a leaver's nomination, with no setting (`OnClientDisconnected`). Here it is a setting, off by default, because a nomination is a request of the server rather than of the person. Turn it on for the plugin's behaviour. |
 
 ## Sounds
 
@@ -95,7 +95,7 @@ Legend: **have** — it was already here; **new** — added for parity; **differ
 | `GetNominatedMapList` | `nominated_ids()`, `nominated_list()` | **new**. |
 | `IsMapOfficial` | `is_official(id)` | **new**. |
 | `CanNominate` | `nomination_state()` → `YES / DISABLED / FULL / VOTE_IN_PROGRESS / VOTE_COMPLETE`, `can_nominate()` | **new**. |
-| `IsWarningTimer` | `is_counting_down()`, `countdown_remaining()` | **new**. |
+| `IsWarningTimer` | `is_counting_down()`, `countdown_remaining()` | **new**. The plugin defines this native and never registers it (it is not in its `CreateNative` list or its include file), so no other plugin could ever call it; the row is here for the name. |
 | `OnMapVoteStarted` | `vote_opened` | have. |
 | `OnMapVoteEnd` | `vote_closed` | have. |
 | `OnMapVoteWarningStart`, `OnMapVoteRunnoffWarningStart` | `countdown_started(seconds, runoff)` | **new**. |
@@ -110,3 +110,17 @@ Legend: **have** — it was already here; **new** — added for parity; **differ
 | Menus, hint boxes, blocked slots | dot-vote draws nothing — `vote_opened`, `countdown_tick` and `tally_updated` carry what a HUD needs. |
 | Bonus-round-time warning | Engine-specific round timing. A host that has one calls `note_round_end` when it ends. |
 | Win-limit clinch detection | The game knows when a match is clinched and reports it as a score or a round. |
+
+## Checked against the source, 2026-09-26
+
+The table was read row by row against the plugins' `.sp` files. Three rows were corrected above (the Extend note, nominations on disconnect, `IsWarningTimer`). What the plugins have that the table did not list, all minor:
+
+| In the plugin | Here |
+| --- | --- |
+| `mce_forcertv`, an alias of `sm_forcertv` | `forcertv` is the one name; aliases are a console's business. |
+| `OnMapVoteStart`, a deprecated forward | `vote_opened`, which the non-deprecated forward already maps to. |
+| `sm_mapvote_reload_sounds`, `sm_mapvote_list_soundsets` (deprecated) | **not**: dot-vote plays nothing; cue ids are the host's catalogue. |
+| The version cvars | **not**: an addon's version is its `plugin.cfg`. |
+| A tie for first always goes to a runoff, whatever the runoff percentage | Stated here because the table did not say it outright: see the runoff rows above for what `runoff_*` does on a tie. |
+
+**What reaches a running ballot, per layer.** `vote_selftest`'s "every config layer reaches a running ballot" sets `end_vote`, `include_extend` and `extend_seconds` through the game's metadata overlay, the JSON file, `DOT_VOTE_*` and `--vote-*`, each in a child process (`examples/layer_probe.gd`, because the command line is the process's own), and asserts the ballot: none opened, no Extend on it, the clock moved by the layered number. dot-server-deploy's own layers (`cfg/vote.yml`, `DOT_GAME_VOTE_*`, `--game-vote-*`) feed the game vote there and are not covered by this.
