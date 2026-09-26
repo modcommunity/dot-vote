@@ -68,7 +68,7 @@ Legend: **have** — it was already here; **new** — added for parity; **differ
 | One per player, replaced | `nominations_per_player: 1` | have. |
 | List full (capped at the ballot size) | `nominations_max`, `nomination_slots` | have, **different**: the list and the ballot places are two numbers. |
 | Duplicates refused | `nomination_seconding: false` | have, **different**: seconding is on by default, because `fill: most_nominated` needs it. |
-| Nominations dropped on disconnect | `nominations_forget_leavers` | **different**: the plugin always drops a leaver's nomination, with no setting (`OnClientDisconnected`). Here it is a setting, off by default, because a nomination is a request of the server rather than of the person. Turn it on for the plugin's behaviour. |
+| Nominations dropped on disconnect | `nominations_forget_leavers` | **different**: the plugin always drops a leaver's nomination, with no setting (`OnClientDisconnect` in `mapchooser_extended.sp`). Here it is a setting, off by default, because a nomination is a request of the server rather than of the person. Turn it on for the plugin's behaviour. |
 
 ## Sounds
 
