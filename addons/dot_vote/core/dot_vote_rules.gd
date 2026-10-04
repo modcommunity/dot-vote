@@ -151,6 +151,38 @@ enum NoVotes {
 	ROTATION,
 }
 
+## What a time or score limit running out does to the round in progress.
+##
+## [b]Two different end-of-map moments, and the round-based shooters have always offered
+## both.[/b] A map clock is not a round clock: the map's limit can run out forty seconds
+## into a two-minute round, and whether that round is cut off or played out is a real
+## choice an operator makes, not a detail.
+enum TimeUp {
+	## The change happens the moment the limit is up, mid-round or not.
+	CHANGE_NOW,
+	## The round in progress is played out and the change happens when it ends. Only on a
+	## host that reports rounds ([member DotVoteDirector.round_based]); everywhere else
+	## there is no round to finish and this is [constant CHANGE_NOW]. Bounded by
+	## [member finish_round_max_sec].
+	FINISH_ROUND,
+}
+
+## How a player chooses on a ballot drawn on their screen.
+##
+## [b]Presentation, but the server's to decide[/b], which is why it is a rule rather than
+## a client setting: what the ballot says to press has to be true on every screen at once,
+## and a server whose players fight with the number keys wants them left alone.
+enum BallotInput {
+	## The number keys choose, as a numbered menu has always worked. Nothing takes the
+	## mouse.
+	NUMBERS,
+	## A key frees the mouse and the player clicks an option. The number keys are left to
+	## the game.
+	POINTER,
+	## Both.
+	BOTH,
+}
+
 ## What rocking the vote does once the next choice has already been decided.
 enum RtvAfterDecided {
 	## A passed rock-the-vote changes to what was decided, now. The players have said
@@ -186,7 +218,11 @@ enum RtvAfterDecided {
 ## either changes the game late or gives players ten seconds to choose; opening it
 ## with a couple of minutes left means the vote finishes and the change happens
 ## exactly on time. 0 opens it at expiry.
-@export_range(0.0, 900.0, 5.0) var vote_lead_sec: float = 120.0
+##
+## Two and a half minutes by default: a countdown, a thirty-second ballot, a possible
+## runoff and the gap in which the result is read all fit inside it with time left, so a
+## decided change waits for the clock rather than the clock waiting for the vote.
+@export_range(0.0, 900.0, 5.0) var vote_lead_sec: float = 150.0
 
 ## The ballot opens when this fraction of the time limit is left. 0 uses
 ## [member vote_lead_sec] instead.
@@ -231,12 +267,22 @@ enum RtvAfterDecided {
 
 @export_group("Time limit")
 
-## Seconds the current choice runs for. 0 disables the clock entirely.
+## Seconds the current choice runs for — the MAP's clock, or the game's. 0 disables the
+## clock entirely.
 ##
-## Zero is a real configuration — a server that only ever changes by vote — and is
-## deliberately not the same as a very long limit, which still fires eventually and
-## surprises somebody at four in the morning.
-@export_range(0.0, 21600.0, 30.0) var duration_sec: float = 1800.0
+## [b]Not a round's length.[/b] How long one round lasts is the game's own rule (dot-match's
+## [code]time_limit_sec[/code]); this is how long the choice lasts across all of its rounds,
+## and [member round_limit] is how many rounds it gets. All three can be set at once.
+##
+## Zero is a real configuration — a server that runs one thing around the clock and only
+## ever changes by rock-the-vote — and is deliberately not the same as a very long limit,
+## which still fires eventually and surprises somebody at four in the morning. A choice
+## carries its own 0 the same way, in its metadata's [code]time_limit_sec[/code].
+##
+## Forty-five minutes by default. Thirty was a deathmatch's number; most of what is voted
+## for here runs longer, and the people still playing at the limit are the ones who wanted
+## more of it.
+@export_range(0.0, 21600.0, 30.0) var duration_sec: float = 2700.0
 
 ## Rounds the current choice runs for. 0 disables the round limit.
 ##
@@ -283,6 +329,23 @@ enum RtvAfterDecided {
 ## On: the players who wanted out have just been outvoted, and keeping their votes
 ## means the map ends again the moment one more person joins and agrees.
 @export var extend_resets_rtv: bool = true
+
+@export_group("Time up")
+
+## What a time or score limit running out does to a round in progress. See [enum TimeUp].
+##
+## A rock-the-vote, an admin's command and a round limit never wait: the first two are
+## somebody asking for now, and a round limit is only ever reached at a round's end.
+@export var time_up: TimeUp = TimeUp.CHANGE_NOW
+
+## Longest a [constant TimeUp.FINISH_ROUND] waits for the round to end, in seconds. 0 waits
+## however long the round takes.
+##
+## [b]Not 0 by default[/b], because a round that cannot end — two players hiding on a map
+## with no round clock, a host that stopped reporting rounds — would otherwise keep the map
+## for ever with its limit long gone. Five minutes is longer than any round a round-based
+## game ships with.
+@export_range(0.0, 3600.0, 10.0) var finish_round_max_sec: float = 300.0
 
 @export_group("Rock the vote")
 
@@ -461,6 +524,20 @@ enum RtvAfterDecided {
 ## Seconds the ballot stays open.
 @export_range(5.0, 600.0, 5.0) var vote_duration_sec: float = 30.0
 
+## How a player chooses on a ballot drawn on their screen. See [enum BallotInput].
+##
+## Carried to clients in [DotVoteBallotView]; nothing on the server reads it. A typed
+## command votes whatever this says, because a console is not a screen.
+@export var ballot_input: BallotInput = BallotInput.BOTH
+
+## Whether a drawn ballot shows who voted for what: every voter's avatar sits beside the
+## option they chose, and moves when they change their mind.
+##
+## On, because a ballot that shows its voters is one nobody calls rigged, and watching the
+## room drift towards a map is half the fun of the vote. Off sends the counts and no names,
+## for a server that wants a secret ballot.
+@export var ballot_show_voters: bool = true
+
 ## Close as soon as everyone eligible has voted rather than waiting out the clock.
 @export var close_when_all_voted: bool = true
 
@@ -629,6 +706,8 @@ const ENUMS := {
 	"rtv_apply": Apply,
 	"rtv_after_decided": RtvAfterDecided,
 	"on_no_votes": NoVotes,
+	"time_up": TimeUp,
+	"ballot_input": BallotInput,
 }
 
 
@@ -881,11 +960,14 @@ func validate() -> DotResult:
 				% [runoff_options, max_options]
 		)
 
-	if trigger == Trigger.TIME_LIMIT and duration_sec <= 0.0:
+	# 0 with a rock-the-vote is "around the clock until the players ask": a real server,
+	# and what a choice's own time_limit_sec: 0 already meant. Only with nothing at all
+	# that could end it is it a configuration that cannot work.
+	if trigger == Trigger.TIME_LIMIT and duration_sec <= 0.0 and not rtv_enabled:
 		return DotResult.fail(
 			DotError.CODE_INVALID,
-			"trigger is time_limit but duration_sec is 0.",
-			"nothing would ever start a vote; use trigger: rtv_only or manual"
+			"trigger is time_limit but duration_sec is 0 and rock-the-vote is off.",
+			"nothing would ever start a vote; set a duration or turn rtv_enabled on"
 		)
 
 	# Any limit will do: under round_end a time or a score limit is held for the round's
@@ -989,5 +1071,14 @@ func summary_lines() -> PackedStringArray:
 		else "%.0f minutes" % cooldown_minutes
 	))
 	out.append("applies    %s after %.0fs" % [enum_name("apply"), apply_delay_sec])
+	out.append("time up    %s%s" % [
+		enum_name("time_up").replace("_", " "),
+		"" if time_up != TimeUp.FINISH_ROUND
+		else (", for at most %ds" % int(finish_round_max_sec)) if finish_round_max_sec > 0.0
+		else ", however long it takes",
+	])
+	out.append("ballot ui  %s, voters %s" % [
+		enum_name("ballot_input"), "shown" if ballot_show_voters else "hidden"
+	])
 
 	return out

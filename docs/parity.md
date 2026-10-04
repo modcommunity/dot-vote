@@ -12,6 +12,8 @@ Legend: **have** — it was already here; **new** — added for parity; **differ
 | --- | --- | --- |
 | `mce_endvote` | `end_vote` | **new**. The switch: off, limits still end the map and the rotation, an admin's `setnextmap` or a rock-the-vote decides what is next. `trigger: rtv_only` is the same thing, and used to open a ballot at the lead anyway — fixed. |
 | `mce_starttime` | `vote_lead_sec` | have. Seconds, not minutes. |
+| (the engines' own "finish the round when the map's time is up") | `time_up`, `finish_round_max_sec`, `DotVoteDirector.round_based` | **new**. `change_now` or `finish_round`, capped; only on a host that reports round ends, and only for a time or score limit. |
+| — (a numbered menu, or a sandbox's clickable map vote with avatars) | `ballot_input`, `ballot_show_voters`, `DotVoteBallotView`, `DotVoteBallotFeed` | **new**. What a client needs to draw the ballot; dot-ui's `DotBallotPanel` draws it. |
 | `mce_start_percent`, `mce_start_percent_enable` | `vote_lead_fraction` | **new**. One setting: 0 is off. Measured against the limit as extended. |
 | `mce_startround` | `vote_lead_rounds` | have. |
 | `mce_startfrags` | `vote_lead_score` with `score_limit` | **new**. A generic score the host reports through `DotVoteDirector.note_score` — frags, team wins, points. `trigger: score_limit` for a game whose only limit is a score. |

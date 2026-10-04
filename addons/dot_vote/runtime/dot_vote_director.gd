@@ -193,6 +193,15 @@ var announce_fn: Callable = Callable()
 ## being dropped. dot-server's [code]DotVoteManager[/code] is the obvious answer to it.
 var busy_fn: Callable = Callable()
 
+## Whether the host reports the end of every round through [method note_round_end].
+##
+## [b]What lets [constant DotVoteRules.TimeUp.FINISH_ROUND] tell a round in progress from no
+## round at all.[/b] A deathmatch with no rounds never calls [method note_round_end], so a
+## limit that "waits for the round to end" there would wait out
+## [member DotVoteRules.finish_round_max_sec] for nothing. Set by the host, because only the
+## host knows; off by default so a host that has never heard of it changes nothing.
+var round_based: bool = false
+
 var _current_id: StringName = &""
 var _vote_remaining: float = 0.0
 var _announce_countdown: float = 0.0
@@ -247,6 +256,18 @@ var _forcing: bool = false
 ## a ballot over a fight in progress: it is held here and opened by [method
 ## note_round_end], which is the moment a round-based game has always voted at.
 var _vote_due_at_round_end: bool = false
+
+## Why the clock last ran out, as a [code]DotVoteClock.REASON_*[/code]. Empty while it has
+## not. Decides whether [method is_finishing_round] applies at all: only a time or score
+## limit waits for the round, never a rock-the-vote or an admin.
+var _expired_reason: StringName = &""
+
+## Seconds since the clock ran out, for [member DotVoteRules.finish_round_max_sec].
+var _since_expiry: float = 0.0
+
+## Whether a round has ended since the clock ran out, which is the moment
+## [constant DotVoteRules.TimeUp.FINISH_ROUND] was waiting for.
+var _round_ended_since_expiry: bool = false
 
 
 func _ready() -> void:
@@ -320,6 +341,9 @@ func begin(id: StringName) -> void:
 	_vote_due_at_round_end = false
 	_countdown_remaining = 0.0
 	_runoff_ids.clear()
+	_expired_reason = &""
+	_since_expiry = 0.0
+	_round_ended_since_expiry = false
 	state = State.RUNNING
 
 	ballot.reset()
@@ -350,6 +374,9 @@ func advance(delta: float) -> void:
 
 	if _cooldown_remaining > 0.0:
 		_cooldown_remaining = maxf(_cooldown_remaining - delta, 0.0)
+
+	if clock.is_expired():
+		_since_expiry += delta
 
 	match state:
 		State.VOTING:
@@ -399,6 +426,12 @@ func _advance_vote(delta: float) -> void:
 ## Under [constant DotVoteRules.Trigger.ROUND_END] this is also where a ballot held back
 ## by a time or score limit opens — see [member _vote_due_at_round_end].
 func note_round_end() -> bool:
+	# Before the clock hears it: a round ending AFTER the limit ran out is the end of the
+	# round a FINISH_ROUND was holding the change for. The round that ran the limit out —
+	# a round limit, reached here — is not a round in progress and holds nothing.
+	if clock.is_expired():
+		_round_ended_since_expiry = true
+
 	var over := clock.note_round_end()
 
 	if state == State.PENDING and _pending_moment == DotVoteRules.Apply.END_OF_ROUND:
@@ -1163,6 +1196,9 @@ func _schedule_change(id: StringName, moment: int) -> void:
 
 ## Whether the moment the pending change waits for has arrived.
 func _ready_to_apply() -> bool:
+	if is_finishing_round():
+		return false
+
 	match _pending_moment:
 		DotVoteRules.Apply.END_OF_ROUND:
 			# Driven by note_round_end rather than polled. A round-based game whose
@@ -1625,6 +1661,16 @@ func _on_vote_due(reason: StringName) -> void:
 
 
 func _on_expired(reason: StringName) -> void:
+	_expired_reason = reason
+	_since_expiry = 0.0
+	_round_ended_since_expiry = false
+
+	if is_finishing_round():
+		DotLog.info(CHANNEL, "the limit is up; the round in progress is played out first", {
+			"reason": String(reason), "at_most_sec": rules.finish_round_max_sec,
+		})
+		_say("Time is up. The change happens when this round ends.")
+
 	if state == State.PENDING:
 		# A vote already decided this and is waiting for the clock; this IS that moment.
 		# Or the players rocked the vote after it was decided, and asked for it now.
@@ -1633,7 +1679,11 @@ func _on_expired(reason: StringName) -> void:
 			and rules.rtv_after_decided == DotVoteRules.RtvAfterDecided.CHANGE_NOW
 		):
 			_pending_delay = 0.0
-			_do_change()
+
+			# Under FINISH_ROUND the round in progress is played out first, and the
+			# PENDING branch of advance applies it the tick _ready_to_apply agrees.
+			if not is_finishing_round():
+				_do_change()
 		return
 
 	if state != State.RUNNING:
@@ -1661,6 +1711,24 @@ func _on_expired(reason: StringName) -> void:
 #
 # The questions the long-standing community map-choosers answer for other plugins, so a
 # HUD, a menu or another addon can ask rather than duplicate the state.
+
+## Whether the clock has run out and the change is waiting for the round in progress to
+## end, under [constant DotVoteRules.TimeUp.FINISH_ROUND].
+##
+## False the moment a round ends, once [member DotVoteRules.finish_round_max_sec] has
+## passed, on a host that is not [member round_based], and for any limit but time or score.
+func is_finishing_round() -> bool:
+	if rules == null or rules.time_up != DotVoteRules.TimeUp.FINISH_ROUND:
+		return false
+
+	if not round_based or not clock.is_expired() or _round_ended_since_expiry:
+		return false
+
+	if _expired_reason != DotVoteClock.REASON_TIME and _expired_reason != DotVoteClock.REASON_SCORE:
+		return false
+
+	return rules.finish_round_max_sec <= 0.0 or _since_expiry < rules.finish_round_max_sec
+
 
 ## Whether a limit running out opens a ballot on this server.
 func end_vote_enabled() -> bool:
@@ -1854,6 +1922,9 @@ func describe_lines() -> PackedStringArray:
 	if _vote_due_at_round_end:
 		out.append("due        a vote opens when this round ends (%s)" % String(_vote_due_reason))
 
+	if is_finishing_round():
+		out.append("time up    finishing the round in progress, %ds so far" % int(_since_expiry))
+
 	out.append("next       %s" % String(_next_in_rotation()))
 
 	return out
@@ -1878,6 +1949,8 @@ func describe() -> Dictionary:
 		"nominations": nominations.size(),
 		"end_vote": end_vote_enabled(),
 		"waiting_for_round_end": _vote_due_at_round_end,
+		"finishing_round": is_finishing_round(),
+		"round_based": round_based,
 		"pending": String(_pending_id) if _pending_id != &"" else "-",
 		"history": history.describe(),
 		"source": source.describe() if source != null else {},

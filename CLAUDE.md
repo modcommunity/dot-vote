@@ -51,6 +51,8 @@ stale.
 | What they hear | `DotVoteDirector.cue` (a signal carrying a `cue_*` id) |
 | A countdown on a HUD | `DotVoteDirector.countdown_started` / `countdown_tick` |
 | The time left on a client's HUD | `DotVoteClockView` — `state_of(director)` on the server, sent when `is_stale`; `adopt` and `formatted_at` on the client |
+| The ballot drawn on a client's screen | `DotVoteBallotView.state_of(director, people_fn)` — options, counts, who chose what, how to choose — and `DotVoteBallotFeed`, which sends it only when it changed; dot-ui's `DotBallotPanel` draws it |
+| Whether a time limit waits for the round in progress | `DotVoteRules.time_up` / `finish_round_max_sec`, and `DotVoteDirector.round_based`, which the host sets when it reports every round end |
 | Whether another vote is on screen | `DotVoteDirector.busy_fn` |
 | The leading score, for a score limit | `DotVoteDirector.note_score` |
 | Whether this addon changes anything at all | `DotVoteDirector.auto_apply`, or a source with no apply |
@@ -68,6 +70,29 @@ Four things about that work are worth keeping in front of you:
 - **A pending change carries its own moment.** `_pending_moment` rather than `rules.apply` read at apply time, because an end-of-map winner, a rock-the-vote winner (`rtv_apply`) and an admin's `set_next` each wait for something different.
 - **Presentation is not policy.** `option_ids()` is the order a player sees and a typed number indexes; `countable_ids()` is choices-first, always, and is what ties are broken in. `pseudo_options_first` moving "don't change" to the top of a menu must not make every tie go to the status quo.
 - **Every new check was armed.** The runoff-line tie, the clock resuming, the rtv interval and the end-vote switch were each broken on purpose and the suite re-run; each fired, and so did the settings sweep, on its own, for the setting whose only reader had been removed.
+
+## Three clocks, and only one of them is a round's
+
+A map's time limit, a round's time limit and a round limit are three settings, and the round-based shooters have always kept them apart: `duration_sec` is the map's clock (or the game's, for a server's game vote), `round_limit` is how many rounds it gets, and how long ONE round lasts is the game's own rule — dot-match's `time_limit_sec` — which this addon never sees. Any of them can be set at once and whichever arrives first ends the choice.
+
+**0 is around the clock.** `duration_sec: 0` with rock-the-vote on validates now — it was refused as "nothing would ever start a vote", which was true of the rules and not of the server, because a rock-the-vote still does. A choice's own `time_limit_sec: 0` already meant the same for one map under a server with a limit; the section "When the time is up" in the suite runs a director for two simulated days on each and then rocks it.
+
+**When the time is up, `time_up` decides what happens to the round in progress.** `change_now` (the default, and what happened before) or `finish_round`: the change waits for the host's next `note_round_end`, for at most `finish_round_max_sec`. Three things about it:
+
+- **Only on a host that says it has rounds.** `DotVoteDirector.round_based` is the host's to set — arena and hungario set it, because both report every round end. Without it there is no round to finish, and a deathmatch would otherwise sit out the five-minute cap waiting for a `note_round_end` that never comes.
+- **Only a time or score limit waits.** A rock-the-vote and an admin's command are somebody asking for now, and a round limit is only ever reached AT a round's end.
+- **The hold is in `_ready_to_apply`, which is the one place every moment goes through** — a winner decided early and waiting for the clock, a ballot still open when the clock ran out, and the rotation a limit falls back on when nobody was asked. The check was armed by removing that one line, and five checks fired.
+
+**The defaults moved.** `duration_sec` is 2700 (forty-five minutes; thirty was a deathmatch's number) and `vote_lead_sec` is 150, which fits a countdown, a thirty-second ballot, a runoff and the result with time left — so a decided change waits for the clock rather than the clock for the vote.
+
+## A ballot a player can click
+
+`DotVoteBallotView` is the ballot as a screen draws it, and `DotVoteBallotFeed` sends it. Still no wire format and still no UI here — the dictionary rides whatever the host has (dot-server-deploy and every game put it in a dot-server notice's `data`), and dot-ui's `DotBallotPanel` draws it — but what a client needs to draw a ballot is decided here, once, rather than by five hosts:
+
+- **Options in `option_ids()` order**, the order a typed number indexes, so option `i` is `!<command> i+1` on every screen and in every console. Not `countable_ids()`.
+- **Who voted for what, by option index**, so every voter's avatar can sit on their choice and move when they change it. `ballot_show_voters: false` sends the counts and no names, for a secret ballot.
+- **How to choose is a rule** (`ballot_input`: numbers, pointer, both), not a client setting, because what the ballot says to press has to be true on every screen at once.
+- **The feed is polled, not signalled**, because `forget_voter` withdraws a ballot without emitting anything and a signal-driven feed kept a departed player's avatar on the board. It compares by hash ignoring the seconds, so an unchanged ballot sends nothing; and it holds the `vote_closed` result for one poll, because by the next the director has forgotten what won. The first version re-sent "closed" on every poll after the result; the suite's "and nothing after" caught it.
 
 ## Bugs found by building it
 
@@ -135,8 +160,8 @@ fails to parse hangs rather than failing.** Run `--check-only` before running a 
   `DotVoteDirector` emits everything a bridge needs (`vote_opened`, `vote_cast`,
   `tally_updated`, `vote_closed`) and takes votes by voter id, which is what a bridge
   hands it.
-- **No UI.** dot-ui's `DotScreen` is the place, and the same dependency argument
-  applies.
+- **No UI.** dot-ui is the place — `DotBallotPanel` draws a `DotVoteBallotView` — and the
+  same dependency argument applies: it takes the dictionary and names nothing here.
 - **No persistence.** `DotVoteHistory` serialises to a dictionary and the host decides
   where it goes. A server that wants its cooldowns to survive a restart writes it out;
   most do not, and a store interface for one dictionary would be ceremony.
@@ -159,7 +184,7 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-374 checks, non-zero on failure. Three sections matter more than the rest:
+422 checks, non-zero on failure. Three sections matter more than the rest:
 
 - **"Every setting is read by something"** runs this family's own mechanical detector
   over `DotVoteRules` — 80 settings in one resource is either this addon's best

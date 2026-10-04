@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 387
+const CHECKS := 422
 
 var _passed := 0
 var _failed := 0
@@ -73,6 +73,8 @@ func _run() -> void:
 	_test_no_votes()
 	_test_admin_and_queries()
 	_test_clock_view()
+	_test_time_up()
+	_test_ballot_view()
 	_test_every_setting_is_read()
 	_test_every_layer_reaches_a_ballot()
 	await _test_real_game_manager()
@@ -344,10 +346,20 @@ func _test_rules_validate() -> void:
 	var no_clock := DotVoteRules.new()
 	no_clock.trigger = DotVoteRules.Trigger.TIME_LIMIT
 	no_clock.duration_sec = 0.0
+	no_clock.rtv_enabled = false
 	_check(
 		not no_clock.validate().ok,
-		"a time-limit trigger with no time limit is refused",
+		"a time-limit trigger with no time limit and no rock-the-vote is refused",
 		"nothing would ever open a vote, silently"
+	)
+
+	var around_the_clock := DotVoteRules.new()
+	around_the_clock.trigger = DotVoteRules.Trigger.TIME_LIMIT
+	around_the_clock.duration_sec = 0.0
+	_check(
+		around_the_clock.validate().ok,
+		"but no time limit WITH rock-the-vote validates: around the clock until the players ask",
+		str(around_the_clock.validate().error.message if not around_the_clock.validate().ok else "")
 	)
 
 	var early := DotVoteRules.new()
@@ -2774,6 +2786,322 @@ func _test_clock_view() -> void:
 		"nor does a manual one, whose count reaching zero ends nothing"
 	)
 
+	_done()
+
+
+## A director whose clock runs out with a winner already decided, for the time_up checks.
+func _time_up_director(
+	time_up: DotVoteRules.TimeUp, round_based: bool, applied: Array, max_wait: float = 0.0
+) -> DotVoteDirector:
+	var source := DotVoteListSource.of(_choices(["a", "b"]))
+	source.apply_fn = func(id: StringName) -> DotResult:
+		applied.append(id)
+		return DotResult.success(id)
+
+	var rules := _rules()
+	rules.duration_sec = 100.0
+	rules.vote_lead_sec = 40.0
+	rules.vote_duration_sec = 5.0
+	rules.include_extend = false
+	rules.apply = DotVoteRules.Apply.END_OF_TIME
+	rules.cooldown = 0
+	rules.time_up = time_up
+	rules.finish_round_max_sec = max_wait
+
+	var director := _make_director(rules, source)
+	director.round_based = round_based
+	director.begin(&"a")
+	source.current = &"a"
+
+	for i in range(61):
+		director.advance(1.0)
+
+	director.cast_one(&"p1", &"b")
+
+	for i in range(6):
+		director.advance(1.0)
+
+	return director
+
+
+func _test_time_up() -> void:
+	_section("When the time is up: change now, or play the round out")
+
+	var defaults := DotVoteRules.new()
+	_check(
+		defaults.vote_lead_sec == 150.0 and defaults.duration_sec == 2700.0,
+		"the ballot opens two and a half minutes before a forty-five-minute limit by default",
+		"%.0f before %.0f" % [defaults.vote_lead_sec, defaults.duration_sec]
+	)
+	_check(
+		defaults.time_up == DotVoteRules.TimeUp.CHANGE_NOW,
+		"and the change happens the moment the time is up unless a server asks otherwise"
+	)
+
+	var layered := DotVoteRules.new()
+	layered.apply_dictionary({"time_up": "finish_round", "finish_round_max_sec": 120, "ballot_input": "pointer"})
+	_check(
+		layered.time_up == DotVoteRules.TimeUp.FINISH_ROUND
+			and layered.finish_round_max_sec == 120.0
+			and layered.ballot_input == DotVoteRules.BallotInput.POINTER,
+		"time_up and ballot_input are written by name in a file"
+	)
+	_check(
+		"\n".join(layered.summary_lines()).contains("finish round, for at most 120s"),
+		"and the summary says how long a round may hold the change",
+		"\n".join(layered.summary_lines())
+	)
+
+	# The control: change now.
+	var now_applied := []
+	var now := _time_up_director(DotVoteRules.TimeUp.CHANGE_NOW, true, now_applied)
+	_check(now.pending_id() == &"b" and now_applied.is_empty(), "a winner is decided and waits for the clock")
+
+	for i in range(40):
+		now.advance(1.0)
+
+	_check(
+		now_applied == [&"b"],
+		"change_now: it changes the moment the time is up, mid-round", str(now_applied)
+	)
+
+	# Finish the round.
+	var held_applied := []
+	var held := _time_up_director(DotVoteRules.TimeUp.FINISH_ROUND, true, held_applied)
+
+	for i in range(40):
+		held.advance(1.0)
+
+	_check(
+		held_applied.is_empty() and held.is_finishing_round(),
+		"finish_round: the time is up and the round in progress is played out", str(held_applied)
+	)
+	_check(
+		"\n".join(held.describe_lines()).contains("finishing the round"),
+		"and describe says so", "\n".join(held.describe_lines())
+	)
+
+	for i in range(120):
+		held.advance(1.0)
+
+	_check(held_applied.is_empty(), "for as long as the round takes, with no cap set")
+
+	held.note_round_end()
+	held.advance(0.1)
+	_check(
+		held_applied == [&"b"] and not held.is_finishing_round(),
+		"and the round ending is the change", str(held_applied)
+	)
+
+	# No rounds to finish.
+	var flat_applied := []
+	var flat := _time_up_director(DotVoteRules.TimeUp.FINISH_ROUND, false, flat_applied)
+
+	for i in range(40):
+		flat.advance(1.0)
+
+	_check(
+		flat_applied == [&"b"],
+		"a host with no rounds has none to finish, and changes on time",
+		"it would otherwise wait out the cap for a round end that never comes"
+	)
+
+	# The cap.
+	var capped_applied := []
+	var capped := _time_up_director(DotVoteRules.TimeUp.FINISH_ROUND, true, capped_applied, 30.0)
+
+	for i in range(60):
+		capped.advance(1.0)
+
+	_check(capped_applied.is_empty(), "a round may hold the change up to its cap")
+
+	for i in range(15):
+		capped.advance(1.0)
+
+	_check(
+		capped_applied == [&"b"],
+		"and not past it: a round that never ends cannot keep the map for ever", str(capped_applied)
+	)
+
+	# A ballot still open when the time runs out waits for the round too.
+	var late_applied := []
+	var late_source := DotVoteListSource.of(_choices(["a", "b"]))
+	late_source.apply_fn = func(id: StringName) -> DotResult:
+		late_applied.append(id)
+		return DotResult.success(id)
+	var late_rules := _rules()
+	late_rules.duration_sec = 100.0
+	late_rules.vote_lead_sec = 0.0
+	late_rules.vote_duration_sec = 10.0
+	late_rules.include_extend = false
+	late_rules.close_when_all_voted = false
+	late_rules.apply = DotVoteRules.Apply.END_OF_TIME
+	late_rules.time_up = DotVoteRules.TimeUp.FINISH_ROUND
+	late_rules.finish_round_max_sec = 0.0
+	late_rules.cooldown = 0
+	var late := _make_director(late_rules, late_source)
+	late.round_based = true
+	late.begin(&"a")
+	late_source.current = &"a"
+
+	for i in range(101):
+		late.advance(1.0)
+
+	_check(late.is_voting(), "with no lead, the ballot opens when the time is up")
+	late.cast_one(&"p1", &"b")
+
+	for i in range(20):
+		late.advance(1.0)
+
+	_check(
+		late_applied.is_empty() and late.pending_id() == &"b",
+		"and its winner waits for the round in progress, not only a winner decided early"
+	)
+	late.note_round_end()
+	late.advance(0.1)
+	_check(late_applied == [&"b"], "until it ends", str(late_applied))
+
+	# Around the clock.
+	var forever_rules := _rules()
+	forever_rules.duration_sec = 0.0
+	forever_rules.rtv_delay_sec = 0.0
+	forever_rules.rtv_min_players = 1
+	forever_rules.rtv_fraction = 0.25
+	var forever := _make_director(forever_rules, DotVoteListSource.of(_choices(["a", "b"])))
+	forever.begin(&"a")
+
+	for i in range(48):
+		forever.advance(3600.0)
+
+	_check(
+		not forever.is_voting() and not forever.clock.is_expired(),
+		"a limit of 0 runs for two days without a ballot"
+	)
+	forever.rock_the_vote(&"p1")
+	_check(forever.is_voting(), "and a rock-the-vote still ends it")
+
+	var zero_choice := _choices(["a", "b"])
+	zero_choice[0].time_limit_sec = 0.0
+	var per_choice := _make_director(_rules(), DotVoteListSource.of(zero_choice))
+	per_choice.begin(&"a")
+	per_choice.advance(100000.0)
+	_check(
+		not per_choice.clock.is_expired() and per_choice.clock.duration == 0.0,
+		"and a choice's own time_limit_sec of 0 is around the clock under a server with a limit"
+	)
+
+	for d: DotVoteDirector in [now, held, flat, capped, late, forever, per_choice]:
+		d.queue_free()
+
+	_done()
+
+
+func _test_ballot_view() -> void:
+	_section("A ballot as a screen draws it: options, counts, who chose what, and how to choose")
+
+	var rules := _rules()
+	rules.include_extend = false
+	rules.close_when_all_voted = false
+	rules.max_options = 3
+	rules.fill = DotVoteRules.Fill.SEQUENTIAL
+	var director := _make_director(rules, DotVoteListSource.of(_choices(["a", "b", "c", "d"])))
+	director.begin(&"d")
+
+	_check(
+		DotVoteBallotView.state_of(director) == {"open": false},
+		"no ballot is a closed one"
+	)
+
+	director.start_vote()
+	director.cast_one(&"u1", &"b")
+	director.cast_one(&"u2", &"b")
+	director.cast_one(&"u3", &"a")
+
+	var people := func(voter: StringName) -> Dictionary:
+		return {"name": "player %s" % voter, "avatar": "https://example.invalid/%s.png" % voter}
+
+	var state := DotVoteBallotView.state_of(director, people)
+	var options: Array = state.get("options", [])
+	var ids := options.map(func(o: Dictionary) -> String: return o["id"])
+	var b_index := ids.find("b")
+
+	_check(
+		bool(state["open"]) and options.size() == 3,
+		"an open ballot carries its options", str(ids)
+	)
+	_check(
+		ids == director.ballot.option_ids().map(func(id: StringName) -> String: return String(id)),
+		"in the order a typed number indexes"
+	)
+	_check(
+		b_index >= 0 and float(options[b_index]["votes"]) == 2.0,
+		"with the counts", str(options)
+	)
+	_check(
+		int(state["voters"]["u1"]) == b_index and int(state["voters"]["u3"]) == ids.find("a"),
+		"and who voted for what, by option index", str(state.get("voters"))
+	)
+	_check(
+		str(state["people"]["u1"]["avatar"]).ends_with("u1.png"),
+		"and who they are, from the host"
+	)
+	_check(
+		state["input"] == "both" and float(state["seconds"]) > 0.0 and not bool(state["multi"]),
+		"and how a player chooses, and how long they have", str(state)
+	)
+
+	rules.ballot_show_voters = false
+	var secret := DotVoteBallotView.state_of(director, people)
+	_check(
+		not secret.has("voters") and not secret.has("people") and secret["options"].size() == 3,
+		"a secret ballot sends the counts and nobody's name"
+	)
+	rules.ballot_show_voters = true
+
+	# The feed.
+	var sent := []
+	var feed := DotVoteBallotFeed.of(director, func(s: Dictionary) -> void: sent.append(s))
+	feed.title = "Vote for the next map"
+	feed.command = "votefor"
+	feed.poll()
+	_check(
+		sent.size() == 1 and sent[0]["title"] == "Vote for the next map" and sent[0]["command"] == "votefor",
+		"a feed sends the open ballot with its title and command", str(sent.size())
+	)
+
+	director.advance(1.0)
+	feed.poll()
+	_check(sent.size() == 1, "and sends nothing while only the time changes", str(sent.size()))
+
+	director.cast_one(&"u3", &"b")
+	feed.poll()
+	_check(
+		sent.size() == 2 and int(sent[1]["voters"]["u3"]) == b_index,
+		"a changed vote is sent, so the avatar moves"
+	)
+
+	director.forget_voter(&"u3")
+	feed.poll()
+	_check(
+		sent.size() == 3 and not sent[2]["voters"].has("u3"),
+		"a voter who left is taken off the board, though forgetting them emits nothing"
+	)
+
+	director.close_vote()
+	feed.poll()
+	_check(
+		sent.size() == 4 and not bool(sent[3]["open"]) and sent[3].get("winner", "") == director.option_label(&"b"),
+		"closing sends what won, once", str(sent.back())
+	)
+	feed.poll()
+	_check(sent.size() == 4, "and nothing after")
+
+	var quiet := []
+	var idle := DotVoteBallotFeed.of(director, func(s: Dictionary) -> void: quiet.append(s))
+	idle.poll()
+	_check(quiet.is_empty(), "a feed that never saw a ballot has nothing to take down")
+
+	director.queue_free()
 	_done()
 
 
