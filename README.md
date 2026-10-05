@@ -59,6 +59,7 @@ That is the whole integration. Everything else is configuration.
 | `DotVoteClock` | The limit, the warnings, the extends and the rock-the-vote. |
 | `DotVoteClockView` | The clock as a client shows it: a state a server sends when it changes, counted down in between, and empty when there is no limit. |
 | `DotVoteBallot` | The open ballot and the four counting methods. |
+| `DotVoteBallotView` / `DotVoteBallotFeed` | The ballot as a client draws it (options in the order a typed number indexes, counts, who chose what, how to choose) and a feed that sends it only when it changed. Still no wire format: the dictionary rides whatever the host has, and dot-ui's `DotBallotPanel` draws it. |
 | `DotVoteNominations` | What players have asked for, in order. |
 | `DotVoteHistory` | What has been played, and what is still on cooldown. |
 | `DotVoteResult` | What was decided, and **how**, including which tie-break, so the announcement can explain itself. |
@@ -116,7 +117,7 @@ apply: end_of_round
 apply_delay_sec: 5
 ```
 
-Eighty settings, and the self-test fails if any one of them is read by nothing. [docs/parity.md](docs/parity.md) maps every setting, command and hook of the long-standing community map-chooser plugins onto these, row by row.
+More than ninety settings, and the self-test fails if any one of them is read by nothing. [docs/parity.md](docs/parity.md) maps every setting, command and hook of the long-standing community map-chooser plugins onto these, row by row.
 
 A game that builds its rules in code layers an operator's file over them in one call — its own defaults, then the running game's `game.yml` metadata, then the file, then `DOT_VOTE_*`, then `--vote-*`:
 
