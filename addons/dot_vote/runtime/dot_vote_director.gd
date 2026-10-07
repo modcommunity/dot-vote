@@ -742,6 +742,16 @@ func start_vote(
 		_pending_id = &""
 		state = State.RUNNING
 
+	# After the PENDING check, so an admin replacing a decided change with nothing to
+	# replace it by is told so rather than having the decision thrown away.
+	if not has_alternatives():
+		if reason == DotVoteClock.REASON_MANUAL:
+			return DotResult.fail(DotError.CODE_STATE, "There is nothing else to vote for.")
+
+		# Success: the due vote is dealt with. A failure here would be retried every frame.
+		_pass_over(reason)
+		return DotResult.success(0.0)
+
 	if rules.vote_warning_sec > 0.0:
 		_begin_countdown(rules.vote_warning_sec, false, reason)
 		return DotResult.success(rules.vote_warning_sec)
@@ -899,6 +909,12 @@ func _advance_countdown(delta: float) -> void:
 
 	if _countdown_runoff:
 		_open_runoff()
+		return
+
+	# The last alternative can go during the countdown: a player leaves and the only other
+	# game needs more of them.
+	if not has_alternatives():
+		_pass_over(_countdown_reason)
 		return
 
 	var opened := open_vote(_countdown_reason)
@@ -1481,6 +1497,7 @@ func _eligible_pool(
 ) -> Array[DotVoteChoice]:
 	var out: Array[DotVoteChoice] = []
 	var all := source.choices()
+	var current_name := _shown_name(source.find(_current_id))
 
 	for choice in all:
 		if taken.has(choice.id):
@@ -1489,7 +1506,14 @@ func _eligible_pool(
 		if not choice.available_for(players):
 			continue
 
-		if choice.id == _current_id and not rules.include_current:
+		# [b]By the name on the ballot as well as by id.[/b] A player tells options apart
+		# only by what is printed, so a second install of the running game under another id
+		# — a built-in copy beside a published one — is offered as "the same thing again",
+		# and a one-game server held a ballot of that game against Extend.
+		if not rules.include_current and (
+			choice.id == _current_id
+			or (current_name != "" and _shown_name(choice) == current_name)
+		):
 			continue
 
 		if not ignore_cooldown and history.on_cooldown(choice.id, all.size(), -1.0, choice):
@@ -1498,6 +1522,50 @@ func _eligible_pool(
 		out.append(choice)
 
 	return out
+
+
+## What a choice is called on a ballot, folded for comparison, or "" for none.
+func _shown_name(choice: DotVoteChoice) -> String:
+	return choice.name_or_id().strip_edges().to_lower() if choice != null else ""
+
+
+## Whether a ballot opened now would offer anything that changes what is running.
+##
+## [b]Not [method build_options], which would answer it[/b]: filling advances the
+## SEQUENTIAL cursor, so asking would skip a page of the rotation. Cooldowns are ignored
+## here because [method build_options] drops them rather than the ballot when they are all
+## that is left.
+func has_alternatives(players: int = -1) -> bool:
+	if source == null:
+		return false
+
+	if not nominations.forced_ids().is_empty():
+		return true
+
+	var count := players if players >= 0 else player_count()
+
+	return not _eligible_pool(count, {}, true).is_empty()
+
+
+## A vote fell due with nothing to choose between, so none is held and play carries on.
+##
+## [b]Rather than a ballot of Extend alone[/b], which is all a server whose content offers
+## one thing — or one thing these players can play — could ever put up: a full-screen
+## question with one answer, on a clock, every time the limit ran out. A refusal instead
+## would be worse: the due vote is retried until it opens, so the clock would sit expired
+## for ever. The clock is restarted exactly as a ballot that chose Extend would leave it,
+## minus the extend it would have used.
+func _pass_over(reason: StringName) -> void:
+	DotLog.info(CHANNEL, "a vote was due and there is nothing else to vote for; carrying on", {
+		"reason": String(reason), "current": String(_current_id),
+	})
+
+	if reason == DotVoteClock.REASON_RTV:
+		_say("There is nothing else to vote for.")
+
+	_vote_reason = reason
+	_vote_due_pending = false
+	_carry_on()
 
 
 func _order_pool(pool: Array[DotVoteChoice]) -> Array[DotVoteChoice]:

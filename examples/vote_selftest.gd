@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 422
+const CHECKS := 433
 
 var _passed := 0
 var _failed := 0
@@ -68,6 +68,7 @@ func _run() -> void:
 	_test_round_end_trigger()
 	_test_lead_fraction()
 	_test_ballot_options()
+	_test_nothing_to_vote_for()
 	_test_rtv_parity()
 	_test_end_vote_switch()
 	_test_no_votes()
@@ -2356,6 +2357,96 @@ func _rtv_director(rules: DotVoteRules, applied: Array) -> DotVoteDirector:
 	director.begin(&"a")
 	source.current = &"a"
 	return director
+
+
+func _test_nothing_to_vote_for() -> void:
+	_section("A vote with nothing else to choose is not held")
+
+	var opened := [0]
+	var rules := _rules()
+	rules.duration_sec = 60.0
+	rules.vote_lead_sec = 0.0
+	rules.include_extend = true
+
+	# The only choice is the one running: a ballot could only be Extend.
+	var lonely := _make_director(rules, DotVoteListSource.of(_choices(["solo"])))
+	lonely.vote_opened.connect(func(_o: Array, _s: float) -> void: opened[0] += 1)
+	lonely.begin(&"solo")
+
+	for i in range(61):
+		lonely.advance(1.0)
+
+	_check(opened[0] == 0, "the only choice's limit running out opens no ballot")
+	_check(not lonely.is_voting() and not lonely.is_counting_down(), "and nothing counts down to one")
+	_check(
+		not lonely.clock.is_expired() and lonely.clock.remaining > 50.0,
+		"and the clock starts again rather than sitting expired (%.0fs)" % lonely.clock.remaining
+	)
+	_check(lonely.can_start_vote(), "with no retry left owing")
+	_check(
+		not lonely.start_vote(DotVoteClock.REASON_MANUAL).ok,
+		"and an admin asking for a vote is told there is nothing to vote for"
+	)
+	lonely.queue_free()
+
+	# The same thing installed twice under two ids: a player sees one name on both.
+	var twice := _choices(["g2g", "owner_g2g", "arena"])
+	twice[0].display_name = "g2gfast"
+	twice[1].display_name = "G2gfast"
+	var named := _make_director(rules, DotVoteListSource.of(twice))
+	named.begin(&"g2g")
+	var offered := named.build_options(4).map(func(c: DotVoteChoice) -> StringName: return c.id)
+	_check(
+		offered == [&"arena"],
+		"a choice named like the running one is not offered as another (%s)" % str(offered)
+	)
+	named.queue_free()
+
+	var only_twice := _choices(["g2g", "owner_g2g"])
+	only_twice[0].display_name = "g2gfast"
+	only_twice[1].display_name = "g2gfast "
+	opened[0] = 0
+	var dup := _make_director(rules, DotVoteListSource.of(only_twice))
+	dup.vote_opened.connect(func(_o: Array, _s: float) -> void: opened[0] += 1)
+	dup.begin(&"g2g")
+
+	for i in range(61):
+		dup.advance(1.0)
+
+	_check(opened[0] == 0, "so a second install of the only game opens no ballot either")
+
+	var included := rules.duplicate() as DotVoteRules
+	included.include_current = true
+	dup.rules = included
+	var back := dup.build_options(4).map(func(c: DotVoteChoice) -> StringName: return c.id)
+	_check(
+		back.has(&"owner_g2g"),
+		"unless include_current asks for what is running (%s)" % str(back)
+	)
+	dup.queue_free()
+
+	# The last alternative goes during the countdown: the ballot is not opened over Extend.
+	var warned := rules.duplicate() as DotVoteRules
+	warned.vote_warning_sec = 5.0
+	var pair := _choices(["a", "b"])
+	opened[0] = 0
+	var racing := _make_director(warned, DotVoteListSource.of(pair))
+	racing.vote_opened.connect(func(_o: Array, _s: float) -> void: opened[0] += 1)
+	racing.begin(&"a")
+	_check(racing.start_vote(DotVoteClock.REASON_MANUAL).ok, "with two choices the countdown starts")
+	pair[1].min_players = 10
+
+	for i in range(6):
+		racing.advance(1.0)
+
+	_check(
+		opened[0] == 0 and not racing.is_voting(),
+		"and when the other needs more players by its end, no ballot opens"
+	)
+	_check(racing.can_start_vote(), "and nothing is left owing")
+	racing.queue_free()
+
+	_done()
 
 
 func _test_rtv_parity() -> void:
