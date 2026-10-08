@@ -151,6 +151,25 @@ enum NoVotes {
 	ROTATION,
 }
 
+## What a time limit running out on an EMPTY server does, when nothing is paused for it.
+##
+## [b]Only reached on a server that does not hibernate.[/b] A hibernating one stops the clock
+## the moment the last player leaves ([method DotVoteDirector.set_hibernating]), so its limit
+## never runs out over an empty room. With hibernation off the clock keeps going, and when it
+## runs out there is nobody to put a ballot to — so something has to decide, or the server
+## sits on one map for ever with a vote owed to nobody.
+enum EmptyChoice {
+	## Draw the next one at random from what the ballot would have offered — never the one
+	## running when there is anything else — and carry on. The user-facing default: an
+	## always-on server keeps moving whether or not anybody is watching.
+	RANDOM,
+	## Take the next one in the source's own order, as [constant NoQuorum.ROTATION] does.
+	ROTATION,
+	## Change nothing until somebody arrives; the vote that was due opens for them. What
+	## happened before this setting existed.
+	WAIT,
+}
+
 ## What a time or score limit running out does to the round in progress.
 ##
 ## [b]Two different end-of-map moments, and the round-based shooters have always offered
@@ -609,6 +628,23 @@ enum RtvAfterDecided {
 ## is the default because the commonest cause is an empty server.
 @export var on_no_votes: NoVotes = NoVotes.KEEP
 
+## What a time limit running out on a server with nobody on it does. See [enum EmptyChoice].
+##
+## [b]Distinct from [member on_no_votes][/b], which is about a ballot that opened and went
+## unanswered. On an empty server no ballot opens at all ([member min_players_to_vote] is 1),
+## so without this the limit runs out, the due vote waits for a voter, and the map never
+## changes. Random by default: a server that does not hibernate is one its owner wants
+## moving, and a draw over the ballot's own pool is what nobody voting would have produced.
+@export var empty_choice: EmptyChoice = EmptyChoice.RANDOM
+
+## Whether waking from hibernation starts what is running again from its configured start.
+##
+## [b]On[/b]: the first player into an empty server gets the whole time limit, a fresh
+## rock-the-vote, every extend and no ballot or decided change left over from the people who
+## left. Off resumes the clock where hibernation froze it — for a server that wants a long
+## map to be the same long map whoever happens to be on it.
+@export var wake_restart: bool = true
+
 ## Whether extend must win outright rather than merely lead.
 ##
 ## On: a tie between "extend" and something new goes to the new thing, because the
@@ -706,6 +742,7 @@ const ENUMS := {
 	"rtv_apply": Apply,
 	"rtv_after_decided": RtvAfterDecided,
 	"on_no_votes": NoVotes,
+	"empty_choice": EmptyChoice,
 	"time_up": TimeUp,
 	"ballot_input": BallotInput,
 }
@@ -1076,6 +1113,9 @@ func summary_lines() -> PackedStringArray:
 		"" if time_up != TimeUp.FINISH_ROUND
 		else (", for at most %ds" % int(finish_round_max_sec)) if finish_round_max_sec > 0.0
 		else ", however long it takes",
+	])
+	out.append("empty      %s; on waking, %s" % [
+		enum_name("empty_choice"), "start again" if wake_restart else "resume"
 	])
 	out.append("ballot ui  %s, voters %s" % [
 		enum_name("ballot_input"), "shown" if ballot_show_voters else "hidden"

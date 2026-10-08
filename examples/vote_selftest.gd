@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 433
+const CHECKS := 463
 
 var _passed := 0
 var _failed := 0
@@ -72,6 +72,8 @@ func _run() -> void:
 	_test_rtv_parity()
 	_test_end_vote_switch()
 	_test_no_votes()
+	_test_hibernation()
+	_test_empty_server()
 	_test_admin_and_queries()
 	_test_clock_view()
 	_test_time_up()
@@ -2720,6 +2722,271 @@ func _test_end_vote_switch() -> void:
 	_done()
 
 
+## Stands in for a dot-server [code]DotServer[/code]: the one signal and the one question
+## [method DotVoteDirector.follow_hibernation] duck-types. The real one is followed in the
+## real game manager's section.
+class FakeHibernatingServer extends Node:
+	signal hibernation_changed(hibernating: bool)
+
+	var asleep := false
+
+	func is_hibernating() -> bool:
+		return asleep
+
+	func sleep(on: bool) -> void:
+		asleep = on
+		hibernation_changed.emit(on)
+
+
+func _test_hibernation() -> void:
+	_section("A hibernating server's clock waits, and starts again from the top when somebody joins")
+
+	var applied := []
+	var source := DotVoteListSource.of(_choices(["a", "b", "c"]))
+	source.apply_fn = func(id: StringName) -> DotResult:
+		applied.append(id)
+		return DotResult.success(id)
+
+	var rules := _rules()
+	rules.duration_sec = 100.0
+	rules.vote_lead_sec = 20.0
+	rules.apply = DotVoteRules.Apply.IMMEDIATE
+
+	_check(rules.wake_restart, "waking starts the clock again by default")
+
+	var director := _make_director(rules, source)
+	director.begin(&"a")
+	source.current = &"a"
+
+	var server := FakeHibernatingServer.new()
+	add_child(server)
+	_check(director.follow_hibernation(server), "a server with hibernation_changed is followed")
+	var plain := Node.new()
+	_check(not director.follow_hibernation(plain), "and an object without it is not")
+	plain.free()
+
+	for i in range(30):
+		director.advance(1.0)
+
+	director.rock_the_vote(&"p1")
+	director.extend(10.0)
+	var before := director.clock.remaining
+
+	server.sleep(true)
+	_check(director.hibernating, "the server going to sleep reaches the director")
+
+	for i in range(3600):
+		director.advance(1.0)
+
+	_check(
+		is_equal_approx(director.clock.remaining, before),
+		"an hour asleep does not move the clock (%.0f left, was %.0f)" % [director.clock.remaining, before],
+		"the clock used to run on through an empty room and hand the first player a map with a minute left"
+	)
+	_check(
+		not director.is_voting() and not director.clock.is_expired() and applied.is_empty(),
+		"and opens no ballot and changes nothing"
+	)
+
+	server.sleep(false)
+	_check(not director.hibernating, "the first player in wakes it")
+	_check(
+		is_equal_approx(director.clock.remaining, 100.0),
+		"to the configured limit, not what was left (%.0f)" % director.clock.remaining
+	)
+	_check(
+		director.clock.extends_used == 0 and director.clock.rtv_votes() == 0,
+		"with every extend back and nobody's rock-the-vote carried over"
+	)
+	_check(
+		director.history.describe() == _history_after_one_play(rules, &"a"),
+		"and no second entry in the history, which would shorten every cooldown"
+	)
+
+	for i in range(10):
+		director.advance(1.0)
+
+	_check(is_equal_approx(director.clock.remaining, 90.0), "and it counts again once awake")
+
+	# A server already asleep when the vote is built is followed from where it is.
+	var asleep_server := FakeHibernatingServer.new()
+	asleep_server.asleep = true
+	add_child(asleep_server)
+	var late := _make_director(_rules(), DotVoteListSource.of(_choices(["a", "b"])))
+	late.begin(&"a")
+	late.follow_hibernation(asleep_server)
+	_check(late.hibernating, "a director following a server that is already asleep starts asleep")
+
+	# wake_restart off resumes rather than restarts.
+	var resume_rules := _rules()
+	resume_rules.duration_sec = 100.0
+	resume_rules.vote_lead_sec = 20.0
+	resume_rules.wake_restart = false
+	var resumer := _make_director(resume_rules, DotVoteListSource.of(_choices(["a", "b"])))
+	resumer.begin(&"a")
+
+	for i in range(40):
+		resumer.advance(1.0)
+
+	resumer.set_hibernating(true)
+	resumer.advance(500.0)
+	resumer.set_hibernating(false)
+	_check(
+		is_equal_approx(resumer.clock.remaining, 60.0),
+		"wake_restart off resumes where it froze (%.0f)" % resumer.clock.remaining
+	)
+
+	for node: Node in [director, late, resumer, server, asleep_server]:
+		node.queue_free()
+
+	_done()
+
+
+func _history_after_one_play(rules: DotVoteRules, id: StringName) -> Dictionary:
+	var history := DotVoteHistory.of(rules)
+	history.note_played(id)
+	return history.describe()
+
+
+## A director on a server nobody is on, whose clock runs out. [param seed_value] seeds its
+## draw; returns what it changed to.
+func _empty_run(
+	choice: DotVoteRules.EmptyChoice, ids: Array, seed_value: int, include_current: bool = false
+) -> Array:
+	var applied := []
+	var source := DotVoteListSource.of(_choices(ids))
+	source.apply_fn = func(id: StringName) -> DotResult:
+		applied.append(id)
+		return DotResult.success(id)
+
+	var rules := _rules()
+	rules.duration_sec = 100.0
+	rules.vote_lead_sec = 20.0
+	rules.empty_choice = choice
+	rules.include_current = include_current
+
+	# And no cooldown, which would otherwise keep what just played off the pool by itself.
+	if include_current:
+		rules.cooldown = 0
+
+	var director := _make_director(rules, source)
+	director.player_count_fn = func() -> int: return 0
+	director.empty_rng = RandomNumberGenerator.new()
+	director.empty_rng.seed = seed_value
+	director.begin(&"a")
+	source.current = &"a"
+
+	for i in range(101):
+		director.advance(1.0)
+
+	director.queue_free()
+	return applied
+
+
+func _test_empty_server() -> void:
+	_section("A server that does not hibernate changes map on its own when nobody is there")
+
+	_check(
+		DotVoteRules.new().empty_choice == DotVoteRules.EmptyChoice.RANDOM,
+		"an empty server's limit draws at random by default"
+	)
+
+	var ids := ["a", "b", "c", "d", "e"]
+	var drawn := {}
+	var all_good := true
+
+	for seed_value in range(1, 25):
+		var applied := _empty_run(DotVoteRules.EmptyChoice.RANDOM, ids, seed_value)
+
+		if applied.size() != 1 or applied[0] == &"a" or not ids.has(String(applied[0])):
+			all_good = false
+
+		if not applied.is_empty():
+			drawn[applied[0]] = true
+
+	_check(
+		all_good,
+		"every run changes exactly once, to something in the rotation that is not what was running",
+		"before this an empty server's due vote waited for a voter for ever"
+	)
+	_check(
+		drawn.size() >= 3,
+		"and the draw is random: %d different maps over 24 seeds (%s)" % [drawn.size(), ", ".join(drawn.keys())]
+	)
+
+	var stayed := 0
+
+	for seed_value in range(1, 25):
+		if _empty_run(DotVoteRules.EmptyChoice.RANDOM, ["a", "b"], seed_value, true) != [&"b"]:
+			stayed += 1
+
+	_check(
+		stayed == 0,
+		"never the map that was running, even where a ballot may offer it (%d of 24 did not move)" % stayed
+	)
+	_check(
+		_empty_run(DotVoteRules.EmptyChoice.ROTATION, ids, 1) == [&"b"],
+		"rotation takes the next in order instead"
+	)
+	_check(
+		_empty_run(DotVoteRules.EmptyChoice.WAIT, ids, 1).is_empty(),
+		"and wait changes nothing, as before"
+	)
+
+	# Before the limit: nothing happens at the lead, because nobody is there to ask.
+	var applied := []
+	var source := DotVoteListSource.of(_choices(ids))
+	source.apply_fn = func(id: StringName) -> DotResult:
+		applied.append(id)
+		return DotResult.success(id)
+	var rules := _rules()
+	rules.duration_sec = 100.0
+	rules.vote_lead_sec = 20.0
+	var players := [0]
+	var director := _make_director(rules, source)
+	director.player_count_fn = func() -> int: return players[0]
+	director.begin(&"a")
+	source.current = &"a"
+
+	for i in range(90):
+		director.advance(1.0)
+
+	_check(
+		not director.is_voting() and applied.is_empty(),
+		"no ballot opens at the lead with nobody to put it to"
+	)
+
+	# Somebody arrives between the lead and the limit: the owed ballot opens for them, and
+	# the empty draw is not taken over their heads.
+	players[0] = 1
+	director.advance(1.0)
+	_check(director.is_voting() or director.is_counting_down(), "somebody arriving before the limit gets the vote")
+	director.queue_free()
+
+	# A one-map server has nowhere to go and carries on with a fresh clock.
+	var lonely_applied := []
+	var lonely_source := DotVoteListSource.of(_choices(["a"]))
+	lonely_source.apply_fn = func(id: StringName) -> DotResult:
+		lonely_applied.append(id)
+		return DotResult.success(id)
+	var lonely_rules := _rules()
+	lonely_rules.duration_sec = 100.0
+	var lonely := _make_director(lonely_rules, lonely_source)
+	lonely.player_count_fn = func() -> int: return 0
+	lonely.begin(&"a")
+
+	for i in range(101):
+		lonely.advance(1.0)
+
+	_check(
+		lonely_applied.is_empty() and not lonely.clock.is_expired() and lonely.clock.remaining > 90.0,
+		"a server with one map carries on with a fresh clock rather than sitting expired (%s)" % lonely.clock.formatted_remaining()
+	)
+	lonely.queue_free()
+
+	_done()
+
+
 func _test_no_votes() -> void:
 	_section("A ballot nobody voted in, three ways")
 
@@ -2770,6 +3037,55 @@ func _test_no_votes() -> void:
 					applied == [&"b"],
 					"ROTATION takes the next in order (%s)" % str(applied)
 				)
+
+		director.queue_free()
+
+	# The same at the end of a map, through the clock, with players present and nobody
+	# voting: keep is the default and restarts the clock (what players see as "it
+	# extended"); random picks one of the ballot's maps instead, never Extend.
+	_check(DotVoteRules.new().on_no_votes == DotVoteRules.NoVotes.KEEP, "keep is the default")
+
+	for policy: Variant in [DotVoteRules.NoVotes.KEEP, DotVoteRules.NoVotes.RANDOM]:
+		var applied := []
+		var source := DotVoteListSource.of(_choices(["a", "b", "c", "d"]))
+		source.apply_fn = func(id: StringName) -> DotResult:
+			applied.append(id)
+			return DotResult.success(id)
+
+		var rules := _rules()
+		rules.on_no_votes = policy as DotVoteRules.NoVotes
+		rules.include_extend = true
+		rules.duration_sec = 100.0
+		rules.vote_lead_sec = 30.0
+		rules.vote_warning_sec = 0.0
+		rules.vote_duration_sec = 10.0
+		rules.cooldown = 0
+		rules.apply = DotVoteRules.Apply.END_OF_TIME
+
+		var director := _make_director(rules, source)
+		director.begin(&"a")
+		source.current = &"a"
+
+		for i in range(75):
+			director.advance(1.0)
+
+		var opened := director.is_voting()
+
+		for i in range(30):
+			director.advance(1.0)
+
+		if policy == DotVoteRules.NoVotes.KEEP:
+			_check(
+				opened and applied.is_empty() and not director.clock.is_expired()
+					and director.clock.remaining > 60.0,
+				"at the end of a map, keep stays on it with a fresh clock (%s left)" % director.clock.formatted_remaining()
+			)
+		else:
+			_check(
+				opened and applied.size() == 1 and applied[0] != &"a"
+					and applied[0] != DotVoteBallot.EXTEND and applied[0] != DotVoteBallot.KEEP,
+				"at the end of a map, random picks one of the ballot's maps, never Extend (%s)" % str(applied)
+			)
 
 		director.queue_free()
 
@@ -3537,6 +3853,17 @@ func _test_real_game_manager() -> void:
 		str(loaded)
 	)
 
+	# The real server's hibernation, followed through its signal and switched by its cvar.
+	var follower := _make_director(_rules(), DotVoteListSource.of(_choices(["a", "b"])))
+	follower.begin(&"a")
+	_check(follower.follow_hibernation(server), "a real DotServer's hibernation can be followed")
+	_check(not follower.hibernating, "and this one, booted with it off, is awake")
+	server.get("console").call("execute", "sv_hibernate_when_empty 1")
+	_check(follower.hibernating, "sv_hibernate_when_empty 1 on the empty server puts the vote's clock to sleep")
+	server.get("console").call("execute", "sv_hibernate_when_empty 0")
+	_check(not follower.hibernating, "and 0 wakes it")
+	follower.queue_free()
+
 	var source := DotVoteGameSource.of(games)
 
 	_check(source.is_usable(), "the game source recognises a real game manager")
@@ -3843,6 +4170,29 @@ func _test_real_map_catalogue() -> void:
 		"a map with no expected length falls back to the server's limit (%.0f)"
 			% director.clock.duration
 	)
+
+	# Nobody on the server, hibernation off, and the limit runs out: the session moves to
+	# the other map on its own, through the same real change_to a vote uses.
+	var nobody := DotVoteRules.new()
+	nobody.apply_delay_sec = 0.0
+	nobody.duration_sec = 60.0
+	nobody.vote_lead_sec = 10.0
+	nobody.cooldown = 0
+	var empty_director := _make_director(nobody, source)
+	empty_director.player_count_fn = func() -> int: return 0
+	empty_director.begin(&"map_two")
+
+	for i in range(61):
+		empty_director.advance(1.0)
+
+	for i in range(5):
+		await get_tree().process_frame
+
+	_check(
+		source.current_id() == &"map_one",
+		"an empty server's limit changes the real session to another map (%s)" % source.current_id()
+	)
+	empty_director.queue_free()
 
 	var listing_only := DotVoteMapSource.of(catalogue)
 	_check(

@@ -202,6 +202,20 @@ var busy_fn: Callable = Callable()
 ## host knows; off by default so a host that has never heard of it changes nothing.
 var round_based: bool = false
 
+## Whether the server this director serves is hibernating, and so whether anything here
+## counts. See [method set_hibernating].
+var hibernating: bool = false
+
+## What [constant DotVoteRules.EmptyChoice.RANDOM] draws with. Null makes one, seeded from
+## the system's entropy, the first time it is needed.
+##
+## [b]Not [method _rng][/b], which is seeded from [member DotVoteRules.fill_seed] and
+## advanced deterministically so a client filling the same ballot reaches the same options.
+## Nobody mirrors an empty server's draw, and a deterministic one would send every freshly
+## booted server in a fleet to the same map at the same moment. Assign one with a seed to
+## make the draw reproducible — the suite does.
+var empty_rng: RandomNumberGenerator = null
+
 var _current_id: StringName = &""
 var _vote_remaining: float = 0.0
 var _announce_countdown: float = 0.0
@@ -335,6 +349,35 @@ func _physics_process(delta: float) -> void:
 ## time limit and everybody's rock-the-vote.
 func begin(id: StringName) -> void:
 	_current_id = id
+	_reset_to_start()
+
+	if id != &"":
+		history.note_played(id)
+
+	DotLog.info(CHANNEL, "now running", {
+		"id": String(id),
+		"limit": clock.formatted_remaining(),
+		"rounds": clock.round_limit,
+	})
+
+
+## Starts what is running again from its configured start, without changing it.
+##
+## A fresh clock at the choice's own limit, no rock-the-vote, every extend, no ballot, no
+## countdown and no decided change — everything [method begin] resets, without the second
+## entry in the history that calling [method begin] again would write, which would shorten
+## every cooldown by one play. What waking from hibernation does
+## ([member DotVoteRules.wake_restart]); public for an admin's "restart the map clock".
+func restart() -> void:
+	_reset_to_start()
+	_cooldown_remaining = 0.0
+
+	DotLog.info(CHANNEL, "started again", {
+		"id": String(_current_id), "limit": clock.formatted_remaining(),
+	})
+
+
+func _reset_to_start() -> void:
 	_pending_id = &""
 	_pending_delay = 0.0
 	_vote_due_pending = false
@@ -349,18 +392,55 @@ func begin(id: StringName) -> void:
 	ballot.reset()
 	nominations.clear()
 
-	var choice := source.find(id) if source != null else null
+	clock.start(source.find(_current_id) if source != null else null)
 
-	clock.start(choice)
 
-	if id != &"":
-		history.note_played(id)
+# --- Hibernation -------------------------------------------------------------
 
-	DotLog.info(CHANNEL, "now running", {
-		"id": String(id),
-		"limit": clock.formatted_remaining(),
-		"rounds": clock.round_limit,
-	})
+## Stops (true) or starts (false) everything this director counts, for a server that
+## hibernates while it is empty.
+##
+## [b]While hibernating nothing advances[/b] — the clock, a ballot, a countdown, the vote
+## cooldown. An empty room's time is not the map's: a server whose clock ran on through the
+## night handed the first player in the morning a map with a minute left and a ballot
+## already owed. On waking, [member DotVoteRules.wake_restart] starts what is running again
+## from its configured limit ([method restart]); off, it resumes where it froze.
+func set_hibernating(on: bool) -> void:
+	if on == hibernating:
+		return
+
+	hibernating = on
+
+	if on:
+		DotLog.info(CHANNEL, "hibernating; the clock waits", {
+			"id": String(_current_id), "left": clock.formatted_remaining() if clock != null else "-",
+		})
+		return
+
+	if rules != null and rules.wake_restart and clock != null:
+		restart()
+	else:
+		DotLog.info(CHANNEL, "awake; the clock resumes", {"id": String(_current_id)})
+
+
+## Follows a server's hibernation: [method set_hibernating] on its
+## [code]hibernation_changed(bool)[/code] signal, from the state it is in now.
+##
+## [b]Duck-typed[/b], for this addon's usual reason: it cannot name dot-server's classes.
+## Anything with that signal will do, and [code]is_hibernating()[/code] when it has one says
+## where to start. Returns false for an object with no such signal — a server from before
+## it existed — and nothing is followed. Safe to call twice.
+func follow_hibernation(server: Object) -> bool:
+	if server == null or not server.has_signal("hibernation_changed"):
+		return false
+
+	if not server.is_connected("hibernation_changed", set_hibernating):
+		server.connect("hibernation_changed", set_hibernating)
+
+	if server.has_method("is_hibernating"):
+		set_hibernating(bool(server.call("is_hibernating")))
+
+	return true
 
 
 func current_id() -> StringName:
@@ -369,7 +449,7 @@ func current_id() -> StringName:
 
 ## Advances every clock this addon owns by one tick of simulated time.
 func advance(delta: float) -> void:
-	if rules == null or not rules.enabled:
+	if rules == null or not rules.enabled or hibernating:
 		return
 
 	if _cooldown_remaining > 0.0:
@@ -1186,14 +1266,15 @@ func extend(seconds: float = -1.0, rounds: int = -1, score: int = -1) -> DotResu
 
 # --- Changing --------------------------------------------------------------
 
-func _schedule_change(id: StringName, moment: int) -> void:
+## [param delay] replaces [member DotVoteRules.apply_delay_sec] when it is not negative.
+func _schedule_change(id: StringName, moment: int, delay: float = -1.0) -> void:
 	if id == &"" or id == DotVoteBallot.EXTEND or id == DotVoteBallot.KEEP:
 		state = State.RUNNING
 		return
 
 	_pending_id = id
 	_pending_moment = moment
-	_pending_delay = rules.apply_delay_sec
+	_pending_delay = delay if delay >= 0.0 else rules.apply_delay_sec
 	state = State.PENDING
 
 	# A rock-the-vote stopped the clock. A winner that waits for the end of the round or
@@ -1757,6 +1838,17 @@ func _on_expired(reason: StringName) -> void:
 	if state != State.RUNNING:
 		return
 
+	# Nobody here to ask. Only a limit — never a rock-the-vote or an admin, both of which
+	# are somebody. A hibernating server never gets here: its clock stops with the room.
+	if (
+		reason != DotVoteClock.REASON_RTV
+		and reason != DotVoteClock.REASON_MANUAL
+		and player_count() <= 0
+		and rules.empty_choice != DotVoteRules.EmptyChoice.WAIT
+	):
+		_resolve_empty(reason)
+		return
+
 	# Nothing was voted on — RTV_ONLY, the end-of-map vote turned off, or rtv_outcome
 	# END_CURRENT — so the rotation decides. A server whose limit expired and did nothing
 	# at all is the failure this addon exists to prevent. MANUAL is the one trigger left
@@ -1773,6 +1865,78 @@ func _on_expired(reason: StringName) -> void:
 	):
 		_vote_reason = reason
 		_schedule_change(_next_in_rotation(), rules.apply)
+
+
+## A limit ran out on a server with nobody on it. See [enum DotVoteRules.EmptyChoice].
+func _resolve_empty(reason: StringName) -> void:
+	# The vote that fell due at the lead and could not open for want of a voter is settled
+	# here, or it would open over the next map the moment somebody arrives.
+	_vote_due_pending = false
+	_vote_due_at_round_end = false
+	_vote_reason = reason
+
+	var picked: StringName = &""
+	var how := ""
+
+	match rules.empty_choice:
+		DotVoteRules.EmptyChoice.RANDOM:
+			picked = empty_draw()
+			how = "drawn at random"
+		DotVoteRules.EmptyChoice.ROTATION:
+			picked = _next_in_rotation()
+			how = "next in rotation"
+
+	if picked == &"":
+		# A one-map server. Carry on with a fresh clock, as a ballot that chose Extend
+		# would, rather than sitting expired until somebody arrives.
+		DotLog.info(CHANNEL, "the limit is up on an empty server and there is nothing else; carrying on", {
+			"current": String(_current_id),
+		})
+		_carry_on()
+		return
+
+	DotLog.info(CHANNEL, "the limit is up and nobody is here to vote; changing", {
+		"from": String(_current_id), "to": String(picked), "how": how,
+	})
+
+	# Nobody is playing a round worth finishing, so FINISH_ROUND has nothing to wait for; and
+	# nobody is reading a result, so apply_delay_sec — the pause that lets them — is 0.
+	_round_ended_since_expiry = true
+	_schedule_change(picked, DotVoteRules.Apply.IMMEDIATE, 0.0)
+
+
+## One choice, drawn at random from what a ballot opened now would offer, or
+## [code]&""[/code] when there is nothing but what is running.
+##
+## The ballot's own pool ([method _eligible_pool]): enabled, not on cooldown (dropped when
+## everything is, as a ballot drops it), and never what is running when there is anything
+## else — even under [member DotVoteRules.include_current], because a draw that lands on the
+## current map is a server that did not change. Availability is judged for one player, the
+## next to arrive: a choice that needs eight is the wrong thing to hand them.
+func empty_draw() -> StringName:
+	if source == null:
+		return &""
+
+	var players := maxi(player_count(), 1)
+	var pool := _eligible_pool(players, {})
+
+	if pool.is_empty():
+		pool = _eligible_pool(players, {}, true)
+
+	var others: Array[DotVoteChoice] = []
+
+	for choice in pool:
+		if choice.id != _current_id:
+			others.append(choice)
+
+	if others.is_empty():
+		return &""
+
+	if empty_rng == null:
+		empty_rng = RandomNumberGenerator.new()
+		empty_rng.randomize()
+
+	return others[empty_rng.randi_range(0, others.size() - 1)].id
 
 
 # --- Asking ----------------------------------------------------------------
@@ -1955,7 +2119,7 @@ func _name_of(id: StringName) -> String:
 func describe_lines() -> PackedStringArray:
 	var out := PackedStringArray()
 
-	out.append("state      %s" % State.keys()[state])
+	out.append("state      %s%s" % [State.keys()[state], " (hibernating)" if hibernating else ""])
 	out.append("running    %s" % (String(_current_id) if _current_id != &"" else "-"))
 	out.append("clock      %s" % clock.timeleft_line())
 	out.append("rtv        %d of %d" % [
@@ -2019,6 +2183,7 @@ func describe() -> Dictionary:
 		"waiting_for_round_end": _vote_due_at_round_end,
 		"finishing_round": is_finishing_round(),
 		"round_based": round_based,
+		"hibernating": hibernating,
 		"pending": String(_pending_id) if _pending_id != &"" else "-",
 		"history": history.describe(),
 		"source": source.describe() if source != null else {},

@@ -42,7 +42,7 @@ stale.
 
 | To change | Where |
 | --- | --- |
-| Any policy at all | `DotVoteRules` — 80 settings, layered like every `DotConfig` |
+| Any policy at all | `DotVoteRules` — 82 settings, layered like every `DotConfig` |
 | A game's own defaults, under an operator's file | `DotVoteRules.layer_over_defaults(file, DotVoteGameSource.running_game_metadata("map_vote"))` |
 | What can be voted for | `DotVoteSource` subclass, or `DotVoteListSource` with a `Callable` |
 | How many players there are, who is an admin, who is a spectator | `DotVoteDirector.player_count_fn` / `is_admin_fn` / `is_spectator_fn` |
@@ -56,6 +56,9 @@ stale.
 | Whether another vote is on screen | `DotVoteDirector.busy_fn` |
 | The leading score, for a score limit | `DotVoteDirector.note_score` |
 | Whether this addon changes anything at all | `DotVoteDirector.auto_apply`, or a source with no apply |
+| Whether the clock waits while the server sleeps | `DotVoteDirector.follow_hibernation(server)` (duck-typed on `hibernation_changed(bool)`), or `set_hibernating` by hand; `DotVoteRules.wake_restart` |
+| What an empty server's limit does when nothing sleeps | `DotVoteRules.empty_choice` (`random`, `rotation`, `wait`); `DotVoteDirector.empty_rng` to seed the draw |
+| What a ballot nobody voted in decides | `DotVoteRules.on_no_votes` (`keep`, `random`, `rotation`) |
 | Command names | `DotVoteCommands.prefix` / `names` |
 | How a command context becomes a voter | `DotVoteCommands.voter_fn` |
 | How what a player typed becomes a choice id | `DotVoteCommands.resolve_fn` — a game whose ids carry a prefix |
@@ -70,6 +73,17 @@ Four things about that work are worth keeping in front of you:
 - **A pending change carries its own moment.** `_pending_moment` rather than `rules.apply` read at apply time, because an end-of-map winner, a rock-the-vote winner (`rtv_apply`) and an admin's `set_next` each wait for something different.
 - **Presentation is not policy.** `option_ids()` is the order a player sees and a typed number indexes; `countable_ids()` is choices-first, always, and is what ties are broken in. `pseudo_options_first` moving "don't change" to the top of a menu must not make every tie go to the status quo.
 - **Every new check was armed.** The runoff-line tie, the clock resuming, the rtv interval and the end-vote switch were each broken on purpose and the suite re-run; each fired, and so did the settings sweep, on its own, for the setting whose only reader had been removed.
+
+## An empty server: the clock sleeps, or the server moves on by itself
+
+Two halves, one per setting of dot-server's `sv_hibernate_when_empty` (2026-10-07):
+
+- **Hibernating (the default).** A director following the server (`follow_hibernation`, which dot-game's `DotGameModule` does for every director under a game module) counts nothing while it sleeps — not the clock, a ballot, a countdown or the cooldown. Waking calls `restart()`: the choice's own limit, every extend, no rock-the-vote, no ballot, no decided change, and **no second history entry** (calling `begin` again would write one and shorten every cooldown). `wake_restart: false` resumes instead.
+- **Not hibernating.** The clock runs, the vote due at the lead cannot open for want of a voter (`min_players_to_vote` is 1) and is retried — so somebody arriving before the limit still gets it — and at the limit, with `player_count()` at 0, `empty_choice` decides: `random` (default) draws from the ballot's own pool, judged for one player, never the running choice even under `include_current`; `rotation` takes the next in order; `wait` is the old behaviour. The change is immediate, with no `apply_delay_sec` and no `finish_round` hold, because nobody is reading a result or playing a round. A one-choice server restarts its clock rather than sitting expired. The draw uses `empty_rng` (entropy-seeded), not `fill_seed`, because a deterministic draw would send every freshly booted server in a fleet to the same map.
+
+**`on_no_votes` is the other "nobody" and is not this.** A ballot that opened with people present and closed with no votes stays (`keep`, the default — the clock restarts, which players see as an extension), or draws one of the ballot's real options, never Extend (`random`), or takes the rotation (`rotation`). Both are ordinary `DotVoteRules` keys, so every game sets them the same way as every other rule: its vote JSON, `DOT_VOTE_ON_NO_VOTES` / `DOT_VOTE_EMPTY_CHOICE`, `--vote-on-no-votes=random`, or its game metadata.
+
+The suite's two sections and the end-of-map half of "A ballot nobody voted in" were armed: the hibernation guard in `advance`, the wake restart, the empty branch, a draw that always takes the first, a draw allowed the current choice, and a broken `random` no-votes branch each failed it.
 
 ## Three clocks, and only one of them is a round's
 
@@ -184,10 +198,10 @@ done
 godot --headless --path . res://examples/vote_selftest.tscn
 ```
 
-422 checks, non-zero on failure. Three sections matter more than the rest:
+463 checks, non-zero on failure. Three sections matter more than the rest:
 
 - **"Every setting is read by something"** runs this family's own mechanical detector
-  over `DotVoteRules` — 80 settings in one resource is either this addon's best
+  over `DotVoteRules` — 82 settings in one resource is either this addon's best
   feature or twenty-six instances of the family's most repeated bug, and the check is
   the difference. It matches `rules.<key>` across the addon and bare identifiers
   inside the rules themselves, rather than any occurrence: `DotVoteChoice` has an
