@@ -378,9 +378,12 @@ enum RtvAfterDecided {
 
 ## Fewest players before rocking the vote does anything.
 ##
-## On a nearly-empty server one person is always a majority. 1 configures exactly
-## that, and is the right answer for a private server.
-@export_range(1, 64, 1) var rtv_min_players: int = 2
+## 1, so a player alone on a server can leave a map they do not want. The obvious
+## "2, so it is a vote" refuses exactly the person with nobody to ask: on an empty
+## server they are stuck on the map until its clock runs out, with a message saying
+## they need somebody who is not there. Above one player [member rtv_fraction] is
+## what makes it a vote. Raise this on a public server that wants a crowd first.
+@export_range(1, 64, 1) var rtv_min_players: int = 1
 
 ## Seconds at the start of a choice during which rocking the vote is refused.
 ##

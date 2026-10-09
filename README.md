@@ -101,7 +101,7 @@ extend_seconds: 900          # by fifteen minutes
 max_extends: 2               # at most twice
 
 rtv_fraction: 0.6
-rtv_min_players: 2
+rtv_min_players: 1
 rtv_delay_sec: 120           # no rtv in the first two minutes
 
 max_options: 6
