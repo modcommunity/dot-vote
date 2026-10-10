@@ -1,0 +1,25 @@
+# History
+
+Bugs worth recognising if they come back. All parsed cleanly; the rule each left is in [design.md](design.md) or [../CLAUDE.md](../CLAUDE.md).
+
+## Building it
+
+- **A choice with no time limit never counted its elapsed time.** `DotVoteClock.running` meant "has a limit" rather than "has started", so `advance()` returned before `elapsed += delta` on a choice configured with no clock, which is exactly the server whose only way to change anything is a vote. `rtv_delay_sec` is measured against `elapsed`, so **rocking the vote was refused for ever on precisely the deployment that depends on it**, with nothing erroring. Found by asserting on `elapsed` rather than on the symptom: every other observable on that clock is correct.
+- **`extend_needs_majority` decided nothing in either position.** With it on, a tie between "extend" and a map went to the map, because extend is erased from the tie. With it off, the ordinary tie-break ran, and every pseudo-option sorts last in ballot order, so `BALLOT_ORDER` handed the tie to the map as well. Two documented policies, one behaviour. *A setting that reads differently and behaves identically is this family's most repeated bug wearing a disguise*: the usual detector (a name that occurs once) does not fire, because the name occurs twice and one of the branches is a no-op.
+- **`Fill.MOST_NOMINATED` could never do anything.** A second player nominating what somebody had already nominated was refused, so every nomination count was exactly 1 and a ballot "filled by most nominated" had nothing to sort by. The community plugin refuses the duplicate too, and there it is consistent because it has no such fill mode. Seconding is now allowed and configurable (`nomination_seconding`), and a player still cannot second themselves.
+- **A vote that could not open was the last one that would ever be offered.** The clock fires once and latches (it has to, or an expired limit opens a ballot on every tick), so a `vote_due` arriving while the vote cooldown was still running, or while there were too few players, was dropped with one warning. The most ordinary sequence reaches it: a vote fails for want of a quorum, somebody rocks the vote thirty seconds later, and **the server never changes anything again.** `_vote_due_pending` retries until it can.
+- **`await` on a coroutine reached through `Object.call` works, and it had to be checked rather than assumed.** `DotVoteGameSource.apply` is `await manager.call("change_game", …)`: a coroutine, called by name, through a variable statically typed as `Object`, from a director whose `source` is statically typed as the *base* class whose `apply` is not a coroutine. Three places for GDScript to decide it is not awaiting anything. The suite drives a real `DotGameManager` through it for that reason.
+- **`==` binds tighter than `as`**, so `a == [x] as Array[StringName]` fails to compile, and a scene whose script fails to parse hangs rather than failing. Already in [gdscript-hazards](../../../docs/gdscript-hazards.md), and hit anyway: run `--check-only` before running a scene.
+
+## The parity work
+
+- **`trigger: rtv_only` opened a ballot at the lead anyway.** The clock fires `vote_due` for a time limit whatever the trigger, and only MANUAL was checked; `_on_expired`'s rotation branch for RTV_ONLY was unreachable on any server with a clock. The fix is `end_vote_enabled()`, which is also what the `end_vote` switch turns off.
+- **Every admin vote command was root-only.** `DotVoteCommands.admin_permission` was `"changelevel"`, a command's name rather than a flag anybody holds, and `DotAdminFlags.granted` matches exactly. It is `"changemap"`, which is `DotAdminFlags.CHANGEMAP`, spelled out because this addon cannot name dot-server's classes.
+- **"Extend" stayed on the ballot after the extensions were used up**, and winning with it produced "This cannot be extended again" and a restarted clock. `DotVoteBallot.extend_available` is set from the clock when a ballot opens.
+- **A nomination made while a ballot was open was accepted and then thrown away** by the change that ballot caused. `nomination_state()` refuses it and says why.
+- **`trigger: time_limit` and `trigger: round_end` behaved identically at runtime** (both limits fired whichever the trigger) and differed only in what `validate()` demanded. Under `round_end` a time or score limit reaching its lead now does not open a ballot over a fight in progress; the director holds it (`is_waiting_for_round_end()`) and the host's next `note_round_end` opens it. A round limit opens at the round end it is due on, and a rock-the-vote never waits. The suite runs the same clock under both triggers and fails unless they differ.
+
+## Later
+
+- **The ballot feed re-sent "closed" on every poll after the result.** The suite's "and nothing after" check caught it; the feed holds the result for exactly one poll.
+- **A signal-driven ballot feed kept a departed player's avatar on the board**, because `forget_voter` emits nothing. The feed is polled.

@@ -1,48 +1,56 @@
 # dot-vote
 
-Voting for what plays next. Read [../CLAUDE.md](../CLAUDE.md) first for the
-family-wide rules; this file is only what is specific to this addon.
+Voting for what plays next: one ballot engine over ids, with rock-the-vote, nominations, runoffs, weighting, cooldowns, time, round and score limits, and the extend rules, for a server's next map or its next game.
 
-## Why it is a separate addon
+Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is specific to this addon.
 
-dot-map already had a map vote — `DotMapVote`, `DotMapTimeLimit` — and dot-server
-already had `DotVoteManager` for yes/no questions. Neither is this, and adding this to
-either would have been the wrong shape twice:
+**Only dot-core is a dependency.** dot-map and dot-server are optional, reached by `load()` and `call()`, and linked (`.gitignore`) only so the suite's integration sections can run against the real thing.
 
-- **`DotVoteManager` is a different question.** It asks "yes or no" with a quorum and
-  a cooldown, and votekick is the reason it exists. A ballot with six options, a
-  transferable preference and a tie-break is not a special case of it.
-- **`DotMapVote` is the same question about one kind of thing.** It is a plurality
-  ballot with one fixed tie-break, one fixed extend rule, and no quorum, cooldown,
-  runoff, weighting or per-map limit. Generalising it in place would have made dot-map
-  the home of a vote engine that dot-server's *games* also need — and a server that
-  votes for its next game would then depend on dot-map to do it.
+## Read before
 
-So the thing being voted for is an id, the meaning of the id is a `DotVoteSource`, and
-one engine serves both. **dot-map's own vote is not deprecated**: a server happy with
-a plurality ballot and a countdown needs nothing here, and `game-playground` and
-`game-g2gfast` still use it.
+| Read | Before |
+| --- | --- |
+| [docs/design.md](docs/design.md) | anything: why it is separate from `DotMapVote` and `DotVoteManager`, choices as ids, the empty server, the three clocks, the ballot view, what is not here, the suite |
+| [docs/parity.md](docs/parity.md) | adding a setting: every setting, command, query and event of the community map-choosers against what covers it here; the row may already exist under another name |
+| [docs/history.md](docs/history.md) | the bugs, and how each looked |
 
-## The one design decision
+## Layout
 
-**A `DotVoteChoice` is an id, a name, and the handful of facts a ballot needs.** It is
-not a game and not a map. The alternative — a ballot over `DotGameDescriptor` — fails
-for the family's parse reason (a script naming a `class_name` the project does not
-have takes every script referencing it down with it), and then fails again for a
-better one: a server offering "Arena", "Arena (low gravity)" and "surf_beginner" on
-one ballot is offering three things of two kinds, and a ballot that holds one kind
-cannot.
+| Path | What |
+| --- | --- |
+| `addons/dot_vote/core/` | `DotVoteChoice` (an id, a name, a ballot's facts), `DotVoteResult`, `DotVoteRules` (every policy, a `DotConfig`) |
+| `addons/dot_vote/runtime/` | `DotVoteDirector` (the engine), `DotVoteBallot`, `DotVoteClock`, `DotVoteNominations`, `DotVoteHistory`, `DotVoteSource` / `DotVoteListSource`, and the client views `DotVoteClockView`, `DotVoteBallotView`, `DotVoteBallotFeed` |
+| `addons/dot_vote/integrations/` | `DotVoteCommands`, `DotVoteMapSource` (dot-map), `DotVoteGameSource` (dot-server's `DotGameManager`) |
+| `examples/vote_selftest.tscn` | the suite; `examples/fixtures/` its data |
 
-Everything else follows from it. The sources are duck-typed. Per-choice settings —
-including the time limit — live in the thing's own metadata under a `vote` key, so a
-game's limit is written beside the game rather than in a second table of ids that goes
-stale.
+## Running and testing
+
+- The family's two steps ([game-dev/CLAUDE.md](../../CLAUDE.md#validating-anything)), then `godot --headless --path . res://examples/vote_selftest.tscn` (non-zero on failure).
+- `addons/dot_map` and `addons/dot_server` must be linked; without them the two integration sections fail loudly, on purpose. [design](docs/design.md#the-suite)
+- A new check is not done until it has been armed: break the code it guards and watch it fire. [design](docs/design.md#four-rules-from-the-parity-work)
+
+## Rules that bite
+
+- A choice is an id plus metadata, never a `DotGameDescriptor` or a map; sources are duck-typed; per-choice settings live in the thing's own metadata under `vote`. [design](docs/design.md#the-one-design-decision)
+- Every `DotVoteRules` setting must be read by something; the suite's sweep checks it, and a setting read in two branches that behave the same is the same bug. [history](docs/history.md#building-it)
+- Never name dot-server or dot-map classes; spell their constants out (`admin_permission = "changemap"` is `DotAdminFlags.CHANGEMAP`). [history](docs/history.md#the-parity-work)
+- `DotVoteClock` latches when it fires, so a `vote_due` that cannot open is retried (`_vote_due_pending`), never dropped. [history](docs/history.md#building-it)
+- `elapsed` counts on a clock with no limit; rock-the-vote timing depends on it. [history](docs/history.md#building-it)
+- A no-change ballot restarts the clock after an end-of-map vote and RESUMES it after a rock-the-vote; `_carry_on` is the only place that decides. [design](docs/design.md#four-rules-from-the-parity-work)
+- A pending change carries its own moment (`_pending_moment`); `_ready_to_apply` is the one gate every moment goes through, including the `finish_round` hold. [design](docs/design.md#three-clocks-and-only-one-of-them-is-a-rounds)
+- `option_ids()` is display order and what a typed number indexes; `countable_ids()` (choices first) is what ties are broken in. [design](docs/design.md#four-rules-from-the-parity-work)
+- `round_based` is set only by a host that reports every round end; only a time or score limit waits for the round. [design](docs/design.md#three-clocks-and-only-one-of-them-is-a-rounds)
+- `trigger: round_end` must behave differently from `time_limit` (a held ballot, `is_waiting_for_round_end()`); `rtv_only` and `end_vote: false` never open a ballot at the lead. [history](docs/history.md#the-parity-work)
+- Hibernation pauses everything and wakes with `restart()`, which writes no second history entry. An empty server that does not sleep moves on by `empty_choice`, drawn from `empty_rng`, never `fill_seed`. [design](docs/design.md#an-empty-server-the-clock-sleeps-or-the-server-moves-on-by-itself)
+- `on_no_votes` is a ballot nobody voted in; `empty_choice` is a server nobody is on. Different keys. [design](docs/design.md#an-empty-server-the-clock-sleeps-or-the-server-moves-on-by-itself)
+- `DotVoteBallotFeed` is polled, compares by hash ignoring seconds, and holds `vote_closed` for exactly one poll. [design](docs/design.md#a-ballot-a-player-can-click)
+- Extend comes off the ballot when the extensions are used up; nominations are refused while a ballot is open. [history](docs/history.md#the-parity-work)
 
 ## Where a game plugs in
 
 | To change | Where |
 | --- | --- |
-| Any policy at all | `DotVoteRules` — 82 settings, layered like every `DotConfig` |
+| Any policy at all | `DotVoteRules`, layered like every `DotConfig` (`defaults < file < DOT_VOTE_* < --vote-*`) |
 | A game's own defaults, under an operator's file | `DotVoteRules.layer_over_defaults(file, DotVoteGameSource.running_game_metadata("map_vote"))` |
 | What can be voted for | `DotVoteSource` subclass, or `DotVoteListSource` with a `Callable` |
 | How many players there are, who is an admin, who is a spectator | `DotVoteDirector.player_count_fn` / `is_admin_fn` / `is_spectator_fn` |
@@ -50,169 +58,17 @@ stale.
 | What the players are told | `DotVoteDirector.announce_fn` |
 | What they hear | `DotVoteDirector.cue` (a signal carrying a `cue_*` id) |
 | A countdown on a HUD | `DotVoteDirector.countdown_started` / `countdown_tick` |
-| The time left on a client's HUD | `DotVoteClockView` — `state_of(director)` on the server, sent when `is_stale`; `adopt` and `formatted_at` on the client |
-| The ballot drawn on a client's screen | `DotVoteBallotView.state_of(director, people_fn)` — options, counts, who chose what, how to choose — and `DotVoteBallotFeed`, which sends it only when it changed; dot-ui's `DotBallotPanel` draws it |
-| Whether a time limit waits for the round in progress | `DotVoteRules.time_up` / `finish_round_max_sec`, and `DotVoteDirector.round_based`, which the host sets when it reports every round end |
+| The time left on a client's HUD | `DotVoteClockView`: `state_of(director)` on the server, sent when `is_stale`; `adopt` and `formatted_at` on the client |
+| The ballot drawn on a client's screen | `DotVoteBallotView.state_of(director, people_fn)` and `DotVoteBallotFeed`; dot-ui's `DotBallotPanel` draws it |
+| Whether a time limit waits for the round in progress | `DotVoteRules.time_up` / `finish_round_max_sec`, and `DotVoteDirector.round_based` |
 | Whether another vote is on screen | `DotVoteDirector.busy_fn` |
 | The leading score, for a score limit | `DotVoteDirector.note_score` |
 | Whether this addon changes anything at all | `DotVoteDirector.auto_apply`, or a source with no apply |
-| Whether the clock waits while the server sleeps | `DotVoteDirector.follow_hibernation(server)` (duck-typed on `hibernation_changed(bool)`), or `set_hibernating` by hand; `DotVoteRules.wake_restart` |
-| What an empty server's limit does when nothing sleeps | `DotVoteRules.empty_choice` (`random`, `rotation`, `wait`); `DotVoteDirector.empty_rng` to seed the draw |
+| Whether the clock waits while the server sleeps | `DotVoteDirector.follow_hibernation(server)` (duck-typed on `hibernation_changed(bool)`), or `set_hibernating`; `DotVoteRules.wake_restart` |
+| What an empty server's limit does when nothing sleeps | `DotVoteRules.empty_choice` (`random`, `rotation`, `wait`); `DotVoteDirector.empty_rng` |
 | What a ballot nobody voted in decides | `DotVoteRules.on_no_votes` (`keep`, `random`, `rotation`) |
 | Command names | `DotVoteCommands.prefix` / `names` |
 | How a command context becomes a voter | `DotVoteCommands.voter_fn` |
-| How what a player typed becomes a choice id | `DotVoteCommands.resolve_fn` — a game whose ids carry a prefix |
+| How what a player typed becomes a choice id | `DotVoteCommands.resolve_fn` (a game whose ids carry a prefix) |
 
-## Parity with the community map-choosers
-
-[docs/parity.md](docs/parity.md) is every setting, command, query and event of the long-standing community map-chooser plugins — the end-of-map chooser, rock-the-vote, nominations and the sounds layer — against what covers it here. Twenty-four settings, four admin commands, twelve queries and five signals were added to close it. Read it before adding a setting: the row may already exist under another name, and the "deliberately not" rows say why.
-
-Four things about that work are worth keeping in front of you:
-
-- **Two "carry on"s.** After an end-of-map ballot that changes nothing the clock restarts, or the next tick expires it again. After a rock-the-vote ballot that changes nothing it RESUMES (`DotVoteClock.resume`), because a restart hands an unpopular map a fresh limit for having been voted on — which is what "don't change" used to do. `DotVoteDirector._carry_on` is the one place that decides, from the reason the ballot opened.
-- **A pending change carries its own moment.** `_pending_moment` rather than `rules.apply` read at apply time, because an end-of-map winner, a rock-the-vote winner (`rtv_apply`) and an admin's `set_next` each wait for something different.
-- **Presentation is not policy.** `option_ids()` is the order a player sees and a typed number indexes; `countable_ids()` is choices-first, always, and is what ties are broken in. `pseudo_options_first` moving "don't change" to the top of a menu must not make every tie go to the status quo.
-- **Every new check was armed.** The runoff-line tie, the clock resuming, the rtv interval and the end-vote switch were each broken on purpose and the suite re-run; each fired, and so did the settings sweep, on its own, for the setting whose only reader had been removed.
-
-## An empty server: the clock sleeps, or the server moves on by itself
-
-Two halves, one per setting of dot-server's `sv_hibernate_when_empty` (2026-10-07):
-
-- **Hibernating (the default).** A director following the server (`follow_hibernation`, which dot-game's `DotGameModule` does for every director under a game module) counts nothing while it sleeps — not the clock, a ballot, a countdown or the cooldown. Waking calls `restart()`: the choice's own limit, every extend, no rock-the-vote, no ballot, no decided change, and **no second history entry** (calling `begin` again would write one and shorten every cooldown). `wake_restart: false` resumes instead.
-- **Not hibernating.** The clock runs, the vote due at the lead cannot open for want of a voter (`min_players_to_vote` is 1) and is retried — so somebody arriving before the limit still gets it — and at the limit, with `player_count()` at 0, `empty_choice` decides: `random` (default) draws from the ballot's own pool, judged for one player, never the running choice even under `include_current`; `rotation` takes the next in order; `wait` is the old behaviour. The change is immediate, with no `apply_delay_sec` and no `finish_round` hold, because nobody is reading a result or playing a round. A one-choice server restarts its clock rather than sitting expired. The draw uses `empty_rng` (entropy-seeded), not `fill_seed`, because a deterministic draw would send every freshly booted server in a fleet to the same map.
-
-**`on_no_votes` is the other "nobody" and is not this.** A ballot that opened with people present and closed with no votes stays (`keep`, the default — the clock restarts, which players see as an extension), or draws one of the ballot's real options, never Extend (`random`), or takes the rotation (`rotation`). Both are ordinary `DotVoteRules` keys, so every game sets them the same way as every other rule: its vote JSON, `DOT_VOTE_ON_NO_VOTES` / `DOT_VOTE_EMPTY_CHOICE`, `--vote-on-no-votes=random`, or its game metadata.
-
-The suite's two sections and the end-of-map half of "A ballot nobody voted in" were armed: the hibernation guard in `advance`, the wake restart, the empty branch, a draw that always takes the first, a draw allowed the current choice, and a broken `random` no-votes branch each failed it.
-
-## Three clocks, and only one of them is a round's
-
-A map's time limit, a round's time limit and a round limit are three settings, and the round-based shooters have always kept them apart: `duration_sec` is the map's clock (or the game's, for a server's game vote), `round_limit` is how many rounds it gets, and how long ONE round lasts is the game's own rule — dot-match's `time_limit_sec` — which this addon never sees. Any of them can be set at once and whichever arrives first ends the choice.
-
-**0 is around the clock.** `duration_sec: 0` with rock-the-vote on validates now — it was refused as "nothing would ever start a vote", which was true of the rules and not of the server, because a rock-the-vote still does. A choice's own `time_limit_sec: 0` already meant the same for one map under a server with a limit; the section "When the time is up" in the suite runs a director for two simulated days on each and then rocks it.
-
-**When the time is up, `time_up` decides what happens to the round in progress.** `change_now` (the default, and what happened before) or `finish_round`: the change waits for the host's next `note_round_end`, for at most `finish_round_max_sec`. Three things about it:
-
-- **Only on a host that says it has rounds.** `DotVoteDirector.round_based` is the host's to set — arena and hungario set it, because both report every round end. Without it there is no round to finish, and a deathmatch would otherwise sit out the five-minute cap waiting for a `note_round_end` that never comes.
-- **Only a time or score limit waits.** A rock-the-vote and an admin's command are somebody asking for now, and a round limit is only ever reached AT a round's end.
-- **The hold is in `_ready_to_apply`, which is the one place every moment goes through** — a winner decided early and waiting for the clock, a ballot still open when the clock ran out, and the rotation a limit falls back on when nobody was asked. The check was armed by removing that one line, and five checks fired.
-
-**The defaults moved.** `duration_sec` is 2700 (forty-five minutes; thirty was a deathmatch's number) and `vote_lead_sec` is 150, which fits a countdown, a thirty-second ballot, a runoff and the result with time left — so a decided change waits for the clock rather than the clock for the vote.
-
-## A ballot a player can click
-
-`DotVoteBallotView` is the ballot as a screen draws it, and `DotVoteBallotFeed` sends it. Still no wire format and still no UI here — the dictionary rides whatever the host has (dot-server-deploy and every game put it in a dot-server notice's `data`), and dot-ui's `DotBallotPanel` draws it — but what a client needs to draw a ballot is decided here, once, rather than by five hosts:
-
-- **Options in `option_ids()` order**, the order a typed number indexes, so option `i` is `!<command> i+1` on every screen and in every console. Not `countable_ids()`.
-- **Who voted for what, by option index**, so every voter's avatar can sit on their choice and move when they change it. `ballot_show_voters: false` sends the counts and no names, for a secret ballot.
-- **How to choose is a rule** (`ballot_input`: numbers, pointer, both), not a client setting, because what the ballot says to press has to be true on every screen at once.
-- **The feed is polled, not signalled**, because `forget_voter` withdraws a ballot without emitting anything and a signal-driven feed kept a departed player's avatar on the board. It compares by hash ignoring the seconds, so an unchanged ballot sends nothing; and it holds the `vote_closed` result for one poll, because by the next the director has forgotten what won. The first version re-sent "closed" on every poll after the result; the suite's "and nothing after" caught it.
-
-## Bugs found by building it
-
-All five parsed cleanly. Three are the family's own recurring shapes.
-
-- **A choice with no time limit never counted its elapsed time.** `DotVoteClock.running`
-  meant "has a limit" rather than "has started", so `advance()` returned before
-  `elapsed += delta` on a choice configured with no clock — which is exactly the
-  server whose only way to change anything is a vote. `rtv_delay_sec` is measured
-  against `elapsed`, so **rocking the vote was refused for ever on precisely the
-  deployment that depends on it**, with nothing erroring. Found by asserting on
-  `elapsed` rather than on the symptom, which is the only reason it was visible: every
-  other observable on that clock is correct.
-
-- **`extend_needs_majority` decided nothing in either position.** With it on, a tie
-  between "extend" and a map went to the map, because extend is erased from the tie.
-  With it off, the ordinary tie-break ran — and every pseudo-option sorts last in
-  ballot order, so `BALLOT_ORDER` handed the tie to the map as well. Two documented
-  policies, one behaviour. *A setting that reads differently and behaves identically
-  is this family's most repeated bug wearing a disguise*: the usual detector — a name
-  that occurs once — does not fire, because the name occurs twice and one of the
-  branches is a no-op.
-
-- **`Fill.MOST_NOMINATED` could never do anything.** A second player nominating what
-  somebody had already nominated was refused, so every nomination count was exactly 1
-  and a ballot "filled by most nominated" had nothing to sort by. SourceMod refuses
-  the duplicate too, and there it is consistent because it has no such fill mode.
-  Seconding is now allowed and configurable (`nomination_seconding`), and a player
-  still cannot second themselves.
-
-- **A vote that could not open was the last one that would ever be offered.** The
-  clock fires once and latches — it has to, or an expired limit opens a ballot on
-  every tick — so a `vote_due` arriving while the vote cooldown was still running, or
-  while there were too few players, was dropped with one warning. The most ordinary
-  sequence there is reaches it: a vote fails for want of a quorum, somebody rocks the
-  vote thirty seconds later, and **the server never changes anything again.**
-  `_vote_due_pending` retries until it can.
-
-- **`await` on a coroutine reached through `Object.call` works, and it had to be
-  checked rather than assumed.** `DotVoteGameSource.apply` is
-  `await manager.call("change_game", …)` — a coroutine, called by name, through a
-  variable statically typed as `Object`, from a director whose `source` is statically
-  typed as the *base* class whose `apply` is not a coroutine. Three places for GDScript
-  to decide it is not awaiting anything. The self-test drives a real `DotGameManager`
-  through it for that reason.
-
-Found by the parity work, 2026-09-23:
-
-- **`trigger: rtv_only` opened a ballot at the lead anyway.** The clock fires `vote_due` for a time limit whatever the trigger, and only MANUAL was checked; `_on_expired`'s rotation branch for RTV_ONLY was unreachable on any server with a clock. The fix is `end_vote_enabled()`, which is also what the new `end_vote` switch turns off.
-- **Every admin vote command was root-only.** `DotVoteCommands.admin_permission` was `"changelevel"` — a command's name, not a flag anybody holds — and `DotAdminFlags.granted` matches exactly. It is `"changemap"` now, which is `DotAdminFlags.CHANGEMAP`, spelled out because this file cannot name dot-server's classes.
-- **"Extend" stayed on the ballot after the extensions were used up**, and winning with it produced "This cannot be extended again" and a restarted clock. `DotVoteBallot.extend_available` is set from the clock when a ballot opens.
-- **A nomination made while a ballot was open was accepted and then thrown away** by the change that ballot caused. `nomination_state()` refuses it and says why.
-- **`trigger: time_limit` and `trigger: round_end` behaved identically at runtime** — both limits fired whichever the trigger — and differed only in what `validate()` demanded: the shape of a setting that reads differently and decides nothing. Fixed in a second pass the same day: under `round_end` a time or score limit reaching its lead no longer opens a ballot over a fight in progress; the director holds it (`is_waiting_for_round_end()`) and the host's next `note_round_end` opens it. A round limit opens at the round end it is due on, as before, and a rock-the-vote never waits. `validate()` now asks only that round_end has some limit. The suite's section runs the same clock under both triggers and fails unless they differ; it was armed by removing the hold, and four checks fired.
-
-And one process hazard, which is already in the family CLAUDE.md and was hit anyway:
-`==` binds tighter than `as`, so `a == [x] as Array[StringName]` parses as
-`(a == [x]) as Array[StringName]` and fails to compile — **and a scene whose script
-fails to parse hangs rather than failing.** Run `--check-only` before running a scene.
-
-## Things deliberately not here
-
-- **No wire format.** A client showing a live ballot needs one, and it belongs in the
-  game's netcode bridge rather than here: dot-net's message registry is where a
-  message type is declared, and naming it here would make this addon require dot-net.
-  `DotVoteDirector` emits everything a bridge needs (`vote_opened`, `vote_cast`,
-  `tally_updated`, `vote_closed`) and takes votes by voter id, which is what a bridge
-  hands it.
-- **No UI.** dot-ui is the place — `DotBallotPanel` draws a `DotVoteBallotView` — and the
-  same dependency argument applies: it takes the dictionary and names nothing here.
-- **No persistence.** `DotVoteHistory` serialises to a dictionary and the host decides
-  where it goes. A server that wants its cooldowns to survive a restart writes it out;
-  most do not, and a store interface for one dictionary would be ceremony.
-- **No per-choice permissions.** dot-map has `nominate_permission` on a map def and
-  this deliberately does not copy it: whether a player may nominate something is a
-  question about the player, and the host answers it before calling `nominate`.
-- **Nothing draws or plays on its own.** `announce_fn` takes a string and `cue` carries an
-  id. What a server says and plays, and where, is not this addon's opinion — the
-  countdown is counted here and drawn by the host.
-- **No dependency on dot-audio.** The `cue_*` settings are ids and the signal hands them
-  over; a sound set is a different set of ids in the rules file.
-
-## Validating
-
-```bash
-godot --headless --path . --import
-find . -name '*.gd' -not -path './.godot/*' | while read f; do
-    godot --headless --path . --check-only --script "res://${f#./}"
-done
-godot --headless --path . res://examples/vote_selftest.tscn
-```
-
-463 checks, non-zero on failure. Three sections matter more than the rest:
-
-- **"Every setting is read by something"** runs this family's own mechanical detector
-  over `DotVoteRules` — 82 settings in one resource is either this addon's best
-  feature or twenty-six instances of the family's most repeated bug, and the check is
-  the difference. It matches `rules.<key>` across the addon and bare identifiers
-  inside the rules themselves, rather than any occurrence: `DotVoteChoice` has an
-  `enabled` too, and a crude grep would report `DotVoteRules.enabled` as read by a
-  file that has never heard of it.
-- **The two integration sections** run a real `DotServer` and a real `DotMapSession`
-  and change what they are running. They are also written entirely through `load()`
-  and `set()`/`call()`, so the suite runs with neither addon linked — and, more to the
-  point, so it exercises exactly the reflection the sources use. If the duck typing is
-  wrong, this is the only place it can show.
-
-`addons/dot_map` and `addons/dot_server` are gitignored symlinks. Without them those
-two sections **fail loudly** rather than being skipped, because "0 failures" from a
-suite that ran nothing is how a family ships two ends that never met.
+Deliberately not here: a wire format, UI, persistence, per-choice permissions, drawing or playing anything, a dot-audio dependency. [design](docs/design.md#deliberately-not-here)
