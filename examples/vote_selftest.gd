@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 491
+const CHECKS := 494
 
 var _passed := 0
 var _failed := 0
@@ -3545,6 +3545,42 @@ func _test_time_up() -> void:
 		flat_applied == [&"b"],
 		"a host with no rounds has none to finish, and changes on time",
 		"it would otherwise wait out the cap for a round end that never comes"
+	)
+
+	# A round-based game with no round live: warmup, waiting for players, between rounds.
+	var live := [false]
+	var warm_applied := []
+	var warm := _time_up_director(DotVoteRules.TimeUp.FINISH_ROUND, true, warm_applied)
+	warm.round_in_progress_fn = func() -> bool: return live[0]
+
+	for i in range(40):
+		warm.advance(1.0)
+
+	_check(
+		warm_applied == [&"b"] and not warm.is_finishing_round(),
+		"a round-based game in warmup has no round to finish, and changes on time",
+		"it held the change for finish_round_max_sec (for ever at 0): %s" % str(warm_applied)
+	)
+
+	var ended_applied := []
+	var ended := _time_up_director(DotVoteRules.TimeUp.FINISH_ROUND, true, ended_applied)
+	var ended_live := [true]
+	ended.round_in_progress_fn = func() -> bool: return ended_live[0]
+
+	for i in range(40):
+		ended.advance(1.0)
+
+	_check(
+		ended_applied.is_empty() and ended.is_finishing_round(),
+		"while the host says a round is live, finish_round still holds the change", str(ended_applied)
+	)
+
+	ended_live[0] = false
+	ended.advance(0.1)
+	_check(
+		ended_applied == [&"b"],
+		"and a round that stops being live without a round end (a reset to warmup) releases it",
+		str(ended_applied)
 	)
 
 	# The cap.

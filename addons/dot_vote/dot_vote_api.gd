@@ -9,5 +9,6 @@ extends RefCounted
 # 1: everything before this file existed (an absent file reads as 1).
 # 2: DotVoteListSource.entries_fn and refresh(), DotVoteSource.before_ballot(); a passed
 #    rock-the-vote opens its ballot under trigger MANUAL.
-const LEVEL := 2
+# 3: DotVoteDirector.round_in_progress_fn; finish_round holds nothing while no round is live.
+const LEVEL := 3
 const OLDEST := 1

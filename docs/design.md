@@ -47,9 +47,10 @@ A map's time limit, a round's time limit and a round limit are three settings, a
 
 **0 is around the clock.** `duration_sec: 0` with rock-the-vote on validates: refusing it as "nothing would ever start a vote" was true of the rules and not of the server, because a rock-the-vote still does. A choice's own `time_limit_sec: 0` means the same for one map under a server with a limit.
 
-**When the time is up, `time_up` decides what happens to the round in progress.** `change_now` (the default) or `finish_round`: the change waits for the host's next `note_round_end`, for at most `finish_round_max_sec`. Three things about it:
+**When the time is up, `time_up` decides what happens to the round in progress.** `change_now` (the default) or `finish_round`: the change waits for the host's next `note_round_end`, for at most `finish_round_max_sec`. Four things about it:
 
 - **Only on a host that says it has rounds.** `DotVoteDirector.round_based` is the host's to set, and only a host that reports every round end may set it. Without it there is no round to finish, and a deathmatch would otherwise sit out the five-minute cap waiting for a `note_round_end` that never comes.
+- **Only while a round is live.** `round_based` says the game has rounds, not that one is being played. A round-based game in warmup or waiting for players has nothing to finish, and once held the change for the whole cap (for ever at `finish_round_max_sec: 0`). The host answers `DotVoteDirector.round_in_progress_fn`; it is asked every tick, so a match reset to warmup mid-hold releases the change without a `note_round_end`. Unset reads as always live.
 - **Only a time or score limit waits.** A rock-the-vote and an admin's command are somebody asking for now, and a round limit is only ever reached AT a round's end.
 - **The hold is in `_ready_to_apply`, which is the one place every moment goes through**: a winner decided early and waiting for the clock, a ballot still open when the clock ran out, and the rotation a limit falls back on when nobody was asked.
 

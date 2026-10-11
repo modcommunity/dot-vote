@@ -64,7 +64,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | A countdown on a HUD | `DotVoteDirector.countdown_started` / `countdown_tick` |
 | The time left on a client's HUD | `DotVoteClockView`: `state_of(director)` on the server, sent when `is_stale`; `adopt` and `formatted_at` on the client |
 | The ballot drawn on a client's screen | `DotVoteBallotView.state_of(director, people_fn)` and `DotVoteBallotFeed`; dot-ui's `DotBallotPanel` draws it |
-| Whether a time limit waits for the round in progress | `DotVoteRules.time_up` / `finish_round_max_sec`, and `DotVoteDirector.round_based` |
+| Whether a time limit waits for the round in progress | `DotVoteRules.time_up` / `finish_round_max_sec`, `DotVoteDirector.round_based`, and `round_in_progress_fn` (warmup holds nothing) |
 | Whether another vote is on screen | `DotVoteDirector.busy_fn` |
 | The leading score, for a score limit | `DotVoteDirector.note_score` |
 | Whether this addon changes anything at all | `DotVoteDirector.auto_apply`, or a source with no apply |

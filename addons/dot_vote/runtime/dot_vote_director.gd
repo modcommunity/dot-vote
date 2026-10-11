@@ -204,6 +204,18 @@ var busy_fn: Callable = Callable()
 ## host knows; off by default so a host that has never heard of it changes nothing.
 var round_based: bool = false
 
+## Whether a round is being played right now, asked by [method is_finishing_round]. Optional.
+##
+## [member round_based] says the game HAS rounds; this says one is LIVE. A round-based game
+## in warmup, waiting for players, or between rounds has nothing to play out, so without it
+## [constant DotVoteRules.TimeUp.FINISH_ROUND] held the change until the next
+## [method note_round_end] or [member DotVoteRules.finish_round_max_sec] (300 s by default,
+## for ever at 0) for a round that had not started. Answering false releases the hold at
+## once, and it is asked every tick, so a round that ends without reaching
+## [method note_round_end] (a match reset to warmup) releases it too. Unset means a round is
+## always in progress, the behaviour before it existed.
+var round_in_progress_fn: Callable = Callable()
+
 ## Whether the server this director serves is hibernating, and so whether anything here
 ## counts. See [method set_hibernating].
 var hibernating: bool = false
@@ -2001,12 +2013,16 @@ func empty_draw() -> StringName:
 ## end, under [constant DotVoteRules.TimeUp.FINISH_ROUND].
 ##
 ## False the moment a round ends, once [member DotVoteRules.finish_round_max_sec] has
-## passed, on a host that is not [member round_based], and for any limit but time or score.
+## passed, on a host that is not [member round_based], while [member round_in_progress_fn]
+## answers false, and for any limit but time or score.
 func is_finishing_round() -> bool:
 	if rules == null or rules.time_up != DotVoteRules.TimeUp.FINISH_ROUND:
 		return false
 
 	if not round_based or not clock.is_expired() or _round_ended_since_expiry:
+		return false
+
+	if round_in_progress_fn.is_valid() and not bool(round_in_progress_fn.call()):
 		return false
 
 	if _expired_reason != DotVoteClock.REASON_TIME and _expired_reason != DotVoteClock.REASON_SCORE:
