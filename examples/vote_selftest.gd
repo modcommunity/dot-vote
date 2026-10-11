@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 494
+const CHECKS := 495
 
 var _passed := 0
 var _failed := 0
@@ -4337,6 +4337,29 @@ func _test_real_game_manager() -> void:
 		"dot-server already ships a `vote`, and a timer server's players type !rtv"
 	)
 
+	# The reply to a vote names what the player saw on the ballot. It printed the id,
+	# so a click on "Don't change" came back in chat as "Voted for __keep__.".
+	var keep_rules := _rules()
+	keep_rules.include_keep = true
+	keep_rules.include_extend = false
+	keep_rules.close_when_all_voted = false
+	var keeper := _make_director(keep_rules, DotVoteListSource.of(_choices(["a", "b", "c"])))
+	keeper.begin(&"c")
+	keeper.start_vote()
+	var keep_commands := DotVoteCommands.new()
+	keep_commands.director = keeper
+	keep_commands.prefix = "k_"
+	keep_commands.bind(console)
+	var keep_at := keeper.ballot.option_ids().find(DotVoteBallot.KEEP) if keeper.is_voting() else -1
+	replies.clear()
+	console.call("execute", "k_votefor %d" % (keep_at + 1), ctx)
+	var keep_reply := replies[0] if not replies.is_empty() else "nothing"
+	_check(
+		keep_at >= 0 and keep_reply.contains("Don't change") and not keep_reply.contains("__"),
+		"a vote's reply names the option's label, not its id (%s)" % keep_reply,
+		"chat said 'Voted for __keep__.' after a click on Don't change"
+	)
+	keeper.queue_free()
 	director.queue_free()
 	server.queue_free()
 	await get_tree().process_frame

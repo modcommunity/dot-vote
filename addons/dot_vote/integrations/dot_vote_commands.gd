@@ -312,7 +312,9 @@ func _cmd_vote(ctx: Object) -> void:
 	else:
 		choice = _resolve(text)
 
-	_reply_result(ctx, director.cast_one(_voter(ctx), choice), "Voted for %s." % choice)
+	# The label, never the id: a no-change option's id is `__keep__`, which is what
+	# chat printed until the reply named the line on the ballot ("Don't change").
+	_reply_result(ctx, director.cast_one(_voter(ctx), choice), "Voted for %s." % director.option_label(choice))
 
 
 func _cmd_timeleft(ctx: Object) -> void:
