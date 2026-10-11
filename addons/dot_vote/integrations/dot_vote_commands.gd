@@ -233,7 +233,10 @@ func _cmd_nominate(ctx: Object) -> void:
 	var id := _resolve(args[0])
 	var result := director.nominate(_voter(ctx), id)
 
-	_reply_result(ctx, result, "Nominated %s." % id)
+	# The label, as the ballot and "Voted for" print it: the id is what the player TYPED, or
+	# what resolve_fn made of it, and the game ballot's ids are descriptor ids such as
+	# `hungry_classic` beside a line saying "nominated Hungario: Classic".
+	_reply_result(ctx, result, "Nominated %s." % director.option_label(id))
 
 
 func _cmd_unnominate(ctx: Object) -> void:
@@ -366,7 +369,8 @@ func _cmd_nominate_add(ctx: Object) -> void:
 
 	var id := _resolve(args[0])
 	_reply_result(
-		ctx, director.force_nominate(id, _voter(ctx)), "%s is on the next ballot." % id
+		ctx, director.force_nominate(id, _voter(ctx)),
+		"%s is on the next ballot." % director.option_label(id)
 	)
 
 

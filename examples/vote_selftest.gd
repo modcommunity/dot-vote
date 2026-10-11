@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 495
+const CHECKS := 497
 
 var _passed := 0
 var _failed := 0
@@ -4360,6 +4360,36 @@ func _test_real_game_manager() -> void:
 		"chat said 'Voted for __keep__.' after a click on Don't change"
 	)
 	keeper.queue_free()
+
+	# The same for a nomination: it replied with the id, so a game ballot's nomination
+	# came back as 'Nominated hungry_classic.' under 'u1 nominated Hungario: Classic.'.
+	var nom_rules := _rules()
+	nom_rules.include_extend = false
+	var nominee := _make_director(nom_rules, DotVoteListSource.of(_choices(["big_bowl", "small_bowl", "x"])))
+	nominee.begin(&"x")
+	var nom_commands := DotVoteCommands.new()
+	nom_commands.director = nominee
+	nom_commands.prefix = "n_"
+	nom_commands.bind(console)
+	replies.clear()
+	console.call("execute", "n_nominate big_bowl", ctx)
+	var nom_reply := replies[0] if not replies.is_empty() else "nothing"
+	_check(
+		nom_reply.contains("Big Bowl") and not nom_reply.contains("big_bowl"),
+		"a nomination's reply names the option's label, not its id (%s)" % nom_reply,
+		"chat said 'Nominated hungry_classic.' for Hungario: Classic"
+	)
+	replies.clear()
+	var admin_ctx: Object = ctx_script.new()
+	admin_ctx.set("reply_sink", func(text: String) -> void: replies.append(text))
+	admin_ctx.set("permissions", PackedStringArray(["changemap"]))
+	console.call("execute", "n_nominate_addmap small_bowl", admin_ctx)
+	var add_reply := replies[0] if not replies.is_empty() else "nothing"
+	_check(
+		add_reply.contains("Small Bowl") and not add_reply.contains("small_bowl"),
+		"an admin's nominate_add names the label too (%s)" % add_reply
+	)
+	nominee.queue_free()
 	director.queue_free()
 	server.queue_free()
 	await get_tree().process_frame
