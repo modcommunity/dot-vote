@@ -35,6 +35,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 - Every `DotVoteRules` setting must be read by something; the suite's sweep checks it, and a setting read in two branches that behave the same is the same bug. [history](docs/history.md#building-it)
 - Never name dot-server or dot-map classes; spell their constants out (`admin_permission = "changemap"` is `DotAdminFlags.CHANGEMAP`). [history](docs/history.md#the-parity-work)
 - `DotVoteClock` latches when it fires, so a `vote_due` that cannot open is retried (`_vote_due_pending`), never dropped. [history](docs/history.md#building-it)
+- A `start_vote` refused only for `busy_fn` is owed, not dropped; `open_vote` is refused outright. [history](docs/history.md#later)
 - `elapsed` counts on a clock with no limit; rock-the-vote timing depends on it. [history](docs/history.md#building-it)
 - A no-change ballot restarts the clock after an end-of-map vote and RESUMES it after a rock-the-vote; `_carry_on` is the only place that decides. [design](docs/design.md#four-rules-from-the-parity-work)
 - A pending change carries its own moment (`_pending_moment`); `_ready_to_apply` is the one gate every moment goes through, including the `finish_round` hold. [design](docs/design.md#three-clocks-and-only-one-of-them-is-a-rounds)

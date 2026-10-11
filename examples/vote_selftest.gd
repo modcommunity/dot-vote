@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 489
+const CHECKS := 491
 
 var _passed := 0
 var _failed := 0
@@ -3856,6 +3856,28 @@ func _test_admin_and_queries() -> void:
 	director.advance(0.5)
 	_check(director.is_voting(), "and opens as soon as it is gone")
 	director.close_vote()
+
+	# A host's own start_vote (a MANUAL game's round ballot) refused for the other vote is
+	# owed too. It said "this one will follow it" and was dropped: a minigame opens its
+	# round's ballot once, so the server's game vote on screen cost that round its ballot.
+	busy[0] = true
+	director._cooldown_remaining = 0.0
+	var asked := director.start_vote(DotVoteClock.REASON_MANUAL)
+	director.advance(0.5)
+	_check(
+		not asked.ok and not director.is_voting() and not director.is_counting_down(),
+		"a host's start_vote waits while another vote is up"
+	)
+	busy[0] = false
+	director.advance(0.5)
+	_check(
+		director.is_voting() or director.is_counting_down(),
+		"and follows it without the host asking again",
+		"refused for busy was dropped: a MANUAL game's round ballot never came"
+	)
+	director.cancel_countdown()
+	if director.is_voting():
+		director.close_vote()
 
 	var picked := director.open_vote(DotVoteClock.REASON_MANUAL, [&"c", &"e", &"nonsense"] as Array[StringName])
 	_check(

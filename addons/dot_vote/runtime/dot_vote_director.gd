@@ -191,6 +191,8 @@ var announce_fn: Callable = Callable()
 ## and whichever loses was voted in by accident. While this answers true a vote that is
 ## due waits — through the same retry a vote refused by the cooldown takes — rather than
 ## being dropped. dot-server's [code]DotVoteManager[/code] is the obvious answer to it.
+## A [method start_vote] refused for this alone is owed the same way (a host's MANUAL ballot
+## included); [method open_vote], which a hand-picked ballot uses, is refused outright.
 var busy_fn: Callable = Callable()
 
 ## Whether the host reports the end of every round through [method note_round_end].
@@ -813,6 +815,15 @@ func start_vote(
 		_refresh_source()
 
 	if not ready.ok:
+		# [b]Another vote on screen is a wait, not a no.[/b] The refusal says "this one will
+		# follow it", and until 2026-10-11 nothing made it true for a ballot a HOST asked for:
+		# a MANUAL game opens its round's ballot once, so a refusal because the server's game
+		# vote was up was that round's ballot gone. Owed through the same retry a due vote
+		# takes, so it opens the tick the other one is down.
+		if _refused_only_for_busy():
+			_vote_due_pending = true
+			_vote_due_reason = reason
+
 		return ready
 
 	if state == State.COUNTDOWN:
@@ -846,6 +857,16 @@ func start_vote(
 		return DotResult.success(rules.vote_warning_sec)
 
 	return open_vote(reason)
+
+
+## Whether [method _can_open] refused only because another vote is on screen: everything
+## else would let the ballot open, so it is owed rather than refused.
+func _refused_only_for_busy() -> bool:
+	return (
+		rules.enabled and state == State.RUNNING and source != null
+		and player_count() >= rules.min_players_to_vote
+		and _cooldown_remaining <= 0.0 and _busy() and has_alternatives()
+	)
 
 
 ## Why a ballot could not open right now, or success.
