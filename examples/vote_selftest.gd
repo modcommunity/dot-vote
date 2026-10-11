@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 497
+const CHECKS := 505
 
 var _passed := 0
 var _failed := 0
@@ -80,6 +80,7 @@ func _run() -> void:
 	_test_clock_view()
 	_test_time_up()
 	_test_ballot_view()
+	_test_voter_names()
 	_test_every_setting_is_read()
 	_test_every_layer_reaches_a_ballot()
 	await _test_real_game_manager()
@@ -3669,6 +3670,99 @@ func _test_time_up() -> void:
 
 	for d: DotVoteDirector in [now, held, flat, capped, late, forever, per_choice]:
 		d.queue_free()
+
+	_done()
+
+
+## Every line about a player names them. The director printed the voter id, so every game's
+## chat read "[Server] u1 nominated Arena." while the ballot beside it drew the name.
+func _test_voter_names() -> void:
+	_section("A line about a player names the player, not their id")
+
+	var said: Array[String] = []
+	var people := func(voter: StringName) -> Dictionary:
+		return {"name": "Alice", "avatar": ""} if voter == &"p1" else {}
+
+	# No resolver: a host from before people_fn still works, and names the id.
+	var bare := _rtv_director(_rules(), [])
+	bare.announce_fn = func(line: String) -> void: said.append(line)
+	bare.nominate(&"p1", &"b")
+	_check(
+		said.size() == 1 and said[0] == "p1 nominated B.",
+		"without people_fn a nomination names the id, as before (%s)" % str(said)
+	)
+	bare.queue_free()
+
+	var named := _rtv_director(_rules(), [])
+	named.announce_fn = func(line: String) -> void: said.append(line)
+	named.people_fn = people
+	said.clear()
+	named.nominate(&"p1", &"b")
+	_check(
+		said.size() == 1 and said[0] == "Alice nominated B.",
+		"with people_fn a nomination names the player (%s)" % str(said),
+		"chat said 'u1 nominated Arena.'"
+	)
+	said.clear()
+	named.rock_the_vote(&"p1")
+	_check(
+		said.size() == 1 and said[0].begins_with("Alice wants a vote"),
+		"so does rocking the vote (%s)" % str(said)
+	)
+	said.clear()
+	named.nominate(&"p9", &"c")
+	_check(
+		said.size() == 1 and said[0] == "p9 nominated C.",
+		"somebody people_fn has no name for falls back to their id (%s)" % str(said)
+	)
+	_check(
+		named.display_name(&"p1") == "Alice" and named.display_name(&"zz") == "zz",
+		"display_name is the name, or the id when there is none"
+	)
+	named.queue_free()
+
+	# The feed's people_fn, which every host already set for the avatars, reaches the
+	# director's lines without a second assignment.
+	var fed := _rtv_director(_rules(), [])
+	fed.announce_fn = func(line: String) -> void: said.append(line)
+	var feed := DotVoteBallotFeed.of(fed, func(_state: Dictionary) -> void: pass)
+	feed.people_fn = people
+	said.clear()
+	fed.nominate(&"p1", &"b")
+	_check(
+		fed.people_fn.is_valid() and said.size() == 1 and said[0] == "Alice nominated B.",
+		"a feed's people_fn is handed to a director that has none (%s)" % str(said)
+	)
+	fed.queue_free()
+
+	# A director that has its own keeps it: the feed only fills a gap.
+	var own := _rtv_director(_rules(), [])
+	own.announce_fn = func(line: String) -> void: said.append(line)
+	own.people_fn = func(_voter: StringName) -> Dictionary: return {"name": "Bob"}
+	var own_feed := DotVoteBallotFeed.of(own, func(_state: Dictionary) -> void: pass)
+	own_feed.people_fn = people
+	said.clear()
+	own.nominate(&"p1", &"b")
+	_check(
+		said.size() == 1 and said[0] == "Bob nominated B.",
+		"a director's own people_fn is not replaced by the feed's (%s)" % str(said)
+	)
+	own.queue_free()
+
+	# And a feed with none draws the ballot's voters with the director's.
+	var drawn_rules := _rules()
+	drawn_rules.ballot_show_voters = true
+	var drawn := _rtv_director(drawn_rules, [])
+	drawn.people_fn = people
+	var drawn_feed := DotVoteBallotFeed.of(drawn, func(_state: Dictionary) -> void: pass)
+	drawn.start_vote()
+	drawn.cast_one(&"p1", drawn.ballot.option_ids()[0] if drawn.ballot != null and not drawn.ballot.option_ids().is_empty() else &"a")
+	var state := drawn_feed.current()
+	_check(
+		str((state.get("people", {}) as Dictionary).get("p1", {}).get("name", "")) == "Alice",
+		"a feed without people_fn draws voters with the director's (%s)" % str(state.get("people", {}))
+	)
+	drawn.queue_free()
 
 	_done()
 

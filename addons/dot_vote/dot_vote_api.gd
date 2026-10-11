@@ -10,5 +10,7 @@ extends RefCounted
 # 2: DotVoteListSource.entries_fn and refresh(), DotVoteSource.before_ballot(); a passed
 #    rock-the-vote opens its ballot under trigger MANUAL.
 # 3: DotVoteDirector.round_in_progress_fn; finish_round holds nothing while no round is live.
-const LEVEL := 3
+# 4: DotVoteDirector.people_fn and display_name(); lines about a player name them, not
+#    their id; DotVoteBallotFeed.people_fn is handed to a director that has none.
+const LEVEL := 4
 const OLDEST := 1

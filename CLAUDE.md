@@ -47,6 +47,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 - Hibernation pauses everything and wakes with `restart()`, which writes no second history entry. An empty server that does not sleep moves on by `empty_choice`, drawn from `empty_rng`, never `fill_seed`. [design](docs/design.md#an-empty-server-the-clock-sleeps-or-the-server-moves-on-by-itself)
 - `on_no_votes` is a ballot nobody voted in; `empty_choice` is a server nobody is on. Different keys. [design](docs/design.md#an-empty-server-the-clock-sleeps-or-the-server-moves-on-by-itself)
 - `DotVoteBallotFeed` is polled, compares by hash ignoring seconds, and holds `vote_closed` for exactly one poll. [design](docs/design.md#a-ballot-a-player-can-click)
+- A line about a player names them through `display_name(voter)`, never the voter id. [history](docs/history.md#later)
 - Extend comes off the ballot when the extensions are used up; nominations are refused while a ballot is open. [history](docs/history.md#the-parity-work)
 
 ## Where a game plugs in
@@ -59,6 +60,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | A list that grows after the director is built (delivered maps) | `DotVoteListSource.entries_fn`, re-read at `begin` and before every ballot (`DotVoteSource.before_ballot`) |
 | How many players there are, who is an admin, who is a spectator | `DotVoteDirector.player_count_fn` / `is_admin_fn` / `is_spectator_fn` |
 | What one player's vote is worth | `DotVoteDirector.weight_fn` |
+| The name a line gives a player | `DotVoteDirector.people_fn` (or the feed's, handed over when the director has none); the id without one |
 | What the players are told | `DotVoteDirector.announce_fn` |
 | What they hear | `DotVoteDirector.cue` (a signal carrying a `cue_*` id) |
 | A countdown on a HUD | `DotVoteDirector.countdown_started` / `countdown_tick` |

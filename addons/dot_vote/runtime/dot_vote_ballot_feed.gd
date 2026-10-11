@@ -32,7 +32,16 @@ extends RefCounted
 var send_fn: Callable = Callable()
 
 ## Who a voter is, for the avatars. See [method DotVoteBallotView.state_of].
-var people_fn: Callable = Callable()
+##
+## Also handed to [member DotVoteDirector.people_fn] when the director has none, so the
+## chat lines name the same player the ballot draws. Every host already set this one, and
+## a host setting it twice is the second place to forget it. Unset, the director's is used.
+var people_fn: Callable = Callable():
+	set(value):
+		people_fn = value
+
+		if director != null and not director.people_fn.is_valid():
+			director.people_fn = value
 
 ## The heading a client draws over the ballot.
 var title: String = "Vote"
@@ -97,7 +106,12 @@ func snapshot() -> Dictionary:
 
 
 func current() -> Dictionary:
-	return _decorate(DotVoteBallotView.state_of(director, people_fn))
+	var people := people_fn
+
+	if not people.is_valid() and director != null:
+		people = director.people_fn
+
+	return _decorate(DotVoteBallotView.state_of(director, people))
 
 
 ## Forgets what was sent, so the next [method poll] sends again. For a host whose clients

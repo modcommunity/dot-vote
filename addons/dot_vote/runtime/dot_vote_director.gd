@@ -178,6 +178,17 @@ var is_spectator_fn: Callable = Callable()
 ## What one voter's ballot is worth. Optional; everybody's is worth 1.
 var weight_fn: Callable = Callable()
 
+## Who a voter is: [code]voter -> {"name": String, "avatar": String}[/code], the same
+## shape [method DotVoteBallotView.state_of] takes. Optional; without it, or when it has
+## no name for somebody, a line names the voter by id.
+##
+## Every line a player reads that is about another player goes through
+## [method display_name]. A voter id is the server's key for a session (`u1`), and
+## "u1 nominated Arena." told a room of players nothing about who did. The same callable
+## as the ballot's because who a voter is has one answer per host;
+## [member DotVoteBallotFeed.people_fn] hands its own over when this one is unset.
+var people_fn: Callable = Callable()
+
 ## Says something to the players. Optional; takes one [String].
 ##
 ## A [Callable] rather than a chat manager, because this addon must not name
@@ -595,6 +606,20 @@ func _weight_for(voter: StringName) -> float:
 	return float(weight_fn.call(voter)) if weight_fn.is_valid() else 1.0
 
 
+## The name a line gives [param voter]: [member people_fn]'s, or the id when there is none.
+func display_name(voter: StringName) -> String:
+	if people_fn.is_valid():
+		var person: Variant = people_fn.call(voter)
+
+		if person is Dictionary:
+			var shown: String = str((person as Dictionary).get("name", "")).strip_edges()
+
+			if shown != "":
+				return shown
+
+	return String(voter)
+
+
 func _say(line: String) -> void:
 	if announce_fn.is_valid():
 		announce_fn.call(line)
@@ -709,7 +734,7 @@ func nominate(voter: StringName, id: StringName) -> DotResult:
 		return added
 
 	nominated.emit(voter, id)
-	_say("%s nominated %s." % [voter, choice.name_or_id()])
+	_say("%s nominated %s." % [display_name(voter), choice.name_or_id()])
 
 	return DotResult.success(choice)
 
@@ -798,7 +823,7 @@ func rock_the_vote(voter: StringName) -> DotResult:
 
 	if result.ok and not clock.is_expired():
 		_say("%s wants a vote (%d of %d)." % [
-			voter, clock.rtv_votes(), clock.rtv_needed(player_count())
+			display_name(voter), clock.rtv_votes(), clock.rtv_needed(player_count())
 		])
 
 	return result
