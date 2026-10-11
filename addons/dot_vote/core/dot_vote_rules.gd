@@ -43,7 +43,10 @@ enum Trigger {
 	ROUND_END,
 	## Only when enough players rock the vote. No clock.
 	RTV_ONLY,
-	## Only when the host asks. For a game that decides for itself.
+	## The scheduled ballot opens only when the host asks
+	## ([method DotVoteDirector.start_vote]); a limit reaching its lead opens nothing. For a
+	## game that decides for itself when its ballot belongs. A passed rock-the-vote still
+	## opens one, as under every trigger: that is the players asking now, not the schedule.
 	MANUAL,
 	## When the leading score reaches [member score_limit] (or [member vote_lead_score]
 	## before it does). A frag limit, a team win limit, a points target — whatever the

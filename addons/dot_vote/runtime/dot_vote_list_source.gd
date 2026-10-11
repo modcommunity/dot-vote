@@ -38,6 +38,17 @@ var label: String = "list"
 ## The file [method load_json] last read, so [method reload] can read it again.
 var loaded_from: String = ""
 
+## [code]func() -> Array[/code]: the list as the host has it NOW, re-read into [member entries]
+## when a choice begins and before every ballot (see [method before_ballot]). Each item is a
+## [DotVoteChoice], an [code][id, name][/code] pair, or a bare id.
+##
+## [b]For a catalogue that grows after the director is built[/b] — maps or courses
+## delivered after boot. Copied into [member entries] once, such a list held only what
+## existed at setup, a list of one never opened a ballot, and every game had to remember
+## to refresh it by hand after each delivery. Unset, [member entries] is the list, as it
+## always was.
+var entries_fn: Callable = Callable()
+
 
 static func of(choices: Array[DotVoteChoice]) -> DotVoteListSource:
 	# Not this class's own name. A script that names itself in an expression, loaded after
@@ -91,6 +102,60 @@ func remove(id: StringName) -> bool:
 			return true
 
 	return false
+
+
+func before_ballot() -> void:
+	if entries_fn.is_valid():
+		var _read := refresh()
+
+
+## Reads [member entries_fn] into [member entries]. Anything but an array keeps the list
+## there was and says why; a list shorter than before is taken as it is, because a map
+## an operator removed should leave the ballot.
+func refresh() -> DotResult:
+	if not entries_fn.is_valid():
+		return DotResult.fail(DotError.CODE_STATE, "This list is not read from anywhere.")
+
+	var listed: Variant = entries_fn.call()
+
+	if not (listed is Array):
+		DotLog.warn(CHANNEL, "the list function returned no list; keeping the old one", {
+			"source": label, "kept": entries.size(),
+		})
+		return DotResult.fail(
+			DotError.CODE_INVALID, "%s's list function did not return an array." % label
+		)
+
+	var read: Array[DotVoteChoice] = []
+	var seen := {}
+
+	for item: Variant in (listed as Array):
+		var choice: DotVoteChoice = null
+
+		if item is DotVoteChoice:
+			choice = item as DotVoteChoice
+		elif item is Array and not (item as Array).is_empty():
+			var row: Array = item
+			choice = DotVoteChoice.of(
+				StringName(str(row[0])), str(row[1]) if row.size() > 1 else ""
+			)
+		elif item != null:
+			choice = DotVoteChoice.of(StringName(str(item)))
+
+		if choice == null or choice.id == &"" or seen.has(choice.id):
+			continue
+
+		seen[choice.id] = true
+		read.append(choice)
+
+	if read.size() != entries.size():
+		DotLog.debug(CHANNEL, "the list changed size", {
+			"source": label, "was": entries.size(), "now": read.size(),
+		})
+
+	entries = read
+
+	return DotResult.success(entries.size())
 
 
 func supports_apply() -> bool:
@@ -162,9 +227,13 @@ func load_json(path: String) -> DotResult:
 	return DotResult.success(entries.size())
 
 
-## Reads the file [method load_json] last read again. Nothing to do for a list that was
-## built in code, and that is not an error.
+## Reads the list again: [member entries_fn] when there is one, else the file
+## [method load_json] last read. Nothing to do for a list that was built in code, and that
+## is not an error.
 func reload() -> DotResult:
+	if entries_fn.is_valid():
+		return refresh()
+
 	if loaded_from == "":
 		return DotResult.success(entries.size())
 

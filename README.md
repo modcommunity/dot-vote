@@ -74,6 +74,8 @@ DotVoteMapSource.of(catalogue, session)     # dot-map's maps
 DotVoteListSource.of(my_choices)            # anything else, with a Callable
 ```
 
+A list that grows while the server runs (maps or courses delivered after boot) is better given as a function than copied in: `source.entries_fn = func() -> Array: return my_catalogue()` is read again when a map begins and before every ballot, so nothing has to be refreshed by hand. It returns `DotVoteChoice`s, `[id, name]` pairs or bare ids.
+
 The two integrations are duck-typed, so this addon installs in a project that has never heard of dot-server or dot-map. Per-choice settings live in the thing's own metadata, so a game's time limit is written beside the game:
 
 ```yaml
@@ -89,7 +91,8 @@ A source that cannot change anything is legitimate: the director runs the whole 
 ## Configuring it
 
 ```yaml
-trigger: time_limit          # round_end holds a time or score ballot until the round ends
+trigger: time_limit          # round_end holds a time or score ballot until the round ends;
+                             # manual: the game opens the scheduled ballot, rock the vote still works
 duration_sec: 1800
 end_vote: true               # a vote for the next map when this one runs out
 vote_lead_sec: 120           # the ballot opens two minutes before the end

@@ -256,8 +256,9 @@ var _countdown_runoff: bool = false
 var _countdown_reason: StringName = DotVoteClock.REASON_MANUAL
 var _runoff_ids: Array[StringName] = []
 
-## Set while [method force_rtv] expires the clock, so a MANUAL trigger — which ignores a
-## player's rock-the-vote — does not also ignore an admin's.
+## Set while [method force_rtv] expires the clock: an admin's "vote now" is never held for
+## a round end or handed back to a MANUAL host. A player's rock-the-vote is not either
+## (see [method _on_vote_due]); this is the admin's half of the same rule.
 var _forcing: bool = false
 
 ## A ballot is due and is waiting for the round in progress to end, under
@@ -349,6 +350,9 @@ func _physics_process(delta: float) -> void:
 ## time limit and everybody's rock-the-vote.
 func begin(id: StringName) -> void:
 	_current_id = id
+	# Before the clock starts, so a choice that arrived since the last ballot starts with
+	# its own limit rather than the default one.
+	_refresh_source()
 	_reset_to_start()
 
 	if id != &"":
@@ -803,6 +807,11 @@ func start_vote(
 ) -> DotResult:
 	var ready := _can_open()
 
+	# Before has_alternatives: a server built with one map that has since been delivered a
+	# second has something to vote for now.
+	if ready.ok:
+		_refresh_source()
+
 	if not ready.ok:
 		return ready
 
@@ -886,6 +895,10 @@ func open_vote(
 
 	if not ready.ok:
 		return ready
+
+	# Again here as well as in start_vote: a countdown can run for a minute, and the list
+	# can grow during it.
+	_refresh_source()
 
 	var players := player_count()
 	var options: Array[DotVoteChoice] = (
@@ -1392,6 +1405,15 @@ func force_rtv() -> DotResult:
 	return DotResult.success(true)
 
 
+## Asks the source to re-read a list it is fed rather than holds
+## ([member DotVoteListSource.entries_fn]): when a choice begins and whenever a ballot is
+## about to be filled. Duck-typed, so a source written before the hook existed, or one
+## that is not a [DotVoteSource] at all, is left alone.
+func _refresh_source() -> void:
+	if source != null and source.has_method("before_ballot"):
+		source.call("before_ballot")
+
+
 ## Re-reads the source, for a list an operator edited on disk.
 func reload() -> DotResult:
 	if source == null:
@@ -1772,7 +1794,17 @@ func _on_vote_due(reason: StringName) -> void:
 			_:
 				pass
 
-	if rules.trigger == DotVoteRules.Trigger.MANUAL and not _forcing:
+	# MANUAL hands the host WHEN the scheduled ballot opens: a limit reaching its lead does
+	# nothing here. A rock-the-vote is not the schedule, it is the players asking now, so it
+	# opens as it would under any other trigger. Until 2026-10-10 it was dropped here too,
+	# and every MANUAL host opened the rocked ballot itself from clock.expired. Those copies
+	# stay harmless: vote_due fires before expired, so by then the ballot is open (or
+	# counting down) and their start_vote is refused rather than opening a second.
+	if (
+		rules.trigger == DotVoteRules.Trigger.MANUAL
+		and reason != DotVoteClock.REASON_RTV
+		and not _forcing
+	):
 		return
 
 	# A limit running out asks the players only when the end-of-map vote is on. With it

@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 463
+const CHECKS := 489
 
 var _passed := 0
 var _failed := 0
@@ -70,6 +70,8 @@ func _run() -> void:
 	_test_ballot_options()
 	_test_nothing_to_vote_for()
 	_test_rtv_parity()
+	_test_manual_rtv()
+	_test_list_fn()
 	_test_end_vote_switch()
 	_test_no_votes()
 	_test_hibernation()
@@ -2359,6 +2361,238 @@ func _rtv_director(rules: DotVoteRules, applied: Array) -> DotVoteDirector:
 	director.begin(&"a")
 	source.current = &"a"
 	return director
+
+
+## What every MANUAL game did by hand until dot-vote opened a rocked ballot itself:
+## WoVote, ScVote, BfhVote, DrVote, PhVote, HsVote and ZzVote each connect this, after the
+## director's own handlers. Kept verbatim here because those copies must keep working
+## against this release, and the danger is a second ballot.
+func _game_rtv_workaround(director: DotVoteDirector, attempts: Array) -> void:
+	director.clock.expired.connect(func(reason: StringName) -> void:
+		if reason != DotVoteClock.REASON_RTV or director.is_voting():
+			return
+
+		attempts.append(director.start_vote(DotVoteClock.REASON_RTV))
+	)
+
+
+func _test_manual_rtv() -> void:
+	_section("MANUAL leaves the scheduled ballot to the host, and a rock-the-vote still opens one")
+
+	# The rocked ballot opens with nobody else asking for it.
+	var applied := []
+	var rules := _rules()
+	rules.trigger = DotVoteRules.Trigger.MANUAL
+	var director := _rtv_director(rules, applied)
+	var opened := []
+	director.vote_opened.connect(func(_o: Array, _s: float) -> void: opened.append(true))
+
+	for i in range(20):
+		director.advance(1.0)
+
+	director.rock_the_vote(&"p1")
+	director.rock_the_vote(&"p2")
+
+	_check(
+		director.is_voting() and opened.size() == 1,
+		"under MANUAL a passed rock-the-vote opens its ballot",
+		"state %s, %d opened" % [director.describe().get("state", "?"), opened.size()]
+	)
+	_check(director.ballot.early, "as a rock-the-vote ballot (no extend, 'don't change' offered)")
+
+	# The schedule is still the host's: a limit reaching its lead and running out opens nothing.
+	var lead := _rtv_director(_manual_rules(), [])
+	var lead_opened := []
+	lead.vote_opened.connect(func(_o: Array, _s: float) -> void: lead_opened.append(true))
+
+	for i in range(120):
+		lead.advance(1.0)
+
+	_check(
+		lead.clock.is_expired() and lead_opened.is_empty() and not lead.is_voting(),
+		"while the limit reaching its lead, and running out, opens nothing under MANUAL"
+	)
+	_check(lead.start_vote(DotVoteClock.REASON_MANUAL).ok and lead.is_voting(), "until the host asks")
+
+	# A game that still opens the rocked ballot itself does not get a second one.
+	var both := _rtv_director(_manual_rules(), [])
+	var attempts := []
+	var both_opened := []
+	both.vote_opened.connect(func(_o: Array, _s: float) -> void: both_opened.append(true))
+	_game_rtv_workaround(both, attempts)
+	both.rock_the_vote(&"p1")
+	both.rock_the_vote(&"p2")
+
+	_check(
+		both.is_voting() and both_opened.size() == 1,
+		"a game's own rtv handler on top: one ballot (%d opened)" % both_opened.size()
+	)
+	_check(attempts.is_empty(), "the game's handler finds it open and stands aside")
+
+	for i in range(10):
+		both.advance(1.0)
+
+	_check(both_opened.size() == 1, "and nothing opens a second one later (%d)" % both_opened.size())
+
+	# With a countdown first the ballot is not open yet when the game's handler runs, and its
+	# start_vote is refused rather than starting another.
+	var warned_rules := _manual_rules()
+	warned_rules.vote_warning_sec = 3.0
+	var warned := _rtv_director(warned_rules, [])
+	var warned_attempts := []
+	var countdowns := []
+	var warned_opened := []
+	warned.countdown_started.connect(func(_s: float, _r: bool) -> void: countdowns.append(true))
+	warned.vote_opened.connect(func(_o: Array, _s: float) -> void: warned_opened.append(true))
+	_game_rtv_workaround(warned, warned_attempts)
+	warned.rock_the_vote(&"p1")
+	warned.rock_the_vote(&"p2")
+
+	_check(
+		countdowns.size() == 1 and warned_attempts.size() == 1
+			and not (warned_attempts[0] as DotResult).ok,
+		"with a countdown: one countdown, and the game's start_vote is refused"
+	)
+
+	for i in range(10):
+		warned.advance(1.0)
+
+	_check(
+		warned_opened.size() == 1 and countdowns.size() == 1,
+		"and exactly one ballot opens when it ends (%d)" % warned_opened.size()
+	)
+
+	# Refused for the moment (another vote on screen): retried by the director, once.
+	var busy := [true]
+	var held := _rtv_director(_manual_rules(), [])
+	held.busy_fn = func() -> bool: return busy[0]
+	var held_attempts := []
+	var held_opened := []
+	held.vote_opened.connect(func(_o: Array, _s: float) -> void: held_opened.append(true))
+	_game_rtv_workaround(held, held_attempts)
+	held.rock_the_vote(&"p1")
+	held.rock_the_vote(&"p2")
+
+	_check(
+		not held.is_voting() and held_attempts.size() == 1,
+		"a rocked ballot that cannot open yet is refused to the game as well"
+	)
+
+	busy[0] = false
+	held.advance(1.0)
+
+	_check(
+		held.is_voting() and held_opened.size() == 1,
+		"and opens once when it can, without the game asking again"
+	)
+
+	# An admin's force_rtv under MANUAL is unchanged.
+	var forced := _rtv_director(_manual_rules(), [])
+	forced.force_rtv()
+	_check(forced.is_voting(), "an admin's force_rtv still opens one under MANUAL")
+
+	# Every other trigger: a rocked ballot opens as before, and the lead does what it did.
+	for trigger: DotVoteRules.Trigger in [
+		DotVoteRules.Trigger.TIME_LIMIT,
+		DotVoteRules.Trigger.ROUND_END,
+		DotVoteRules.Trigger.RTV_ONLY,
+	]:
+		var trig_name: String = DotVoteRules.Trigger.keys()[trigger]
+		var trig_rules := _rules()
+		trig_rules.trigger = trigger
+		var rocked := _rtv_director(trig_rules, [])
+		var rocked_opened := []
+		rocked.vote_opened.connect(func(_o: Array, _s: float) -> void: rocked_opened.append(true))
+		rocked.rock_the_vote(&"p1")
+		rocked.rock_the_vote(&"p2")
+		_check(
+			rocked.is_voting() and rocked_opened.size() == 1,
+			"%s: a passed rock-the-vote opens one ballot" % trig_name
+		)
+
+		var lead_rules := _rules()
+		lead_rules.trigger = trigger
+		var timed := _rtv_director(lead_rules, [])
+
+		for i in range(91):
+			timed.advance(1.0)
+
+		var expected := trigger == DotVoteRules.Trigger.TIME_LIMIT
+		_check(
+			timed.is_voting() == expected,
+			"%s: the limit's lead %s" % [trig_name, "opens the ballot" if expected else "does not open it mid-round"]
+		)
+
+	_done()
+
+
+func _manual_rules() -> DotVoteRules:
+	var rules := _rules()
+	rules.trigger = DotVoteRules.Trigger.MANUAL
+	return rules
+
+
+func _test_list_fn() -> void:
+	_section("A list read from the host when a ballot opens reaches maps delivered after boot")
+
+	var catalogue: Array = [["a", "Alpha"]]
+	var source := DotVoteListSource.new()
+	source.entries_fn = func() -> Array: return catalogue
+	var director := _make_director(_manual_rules(), source)
+	director.begin(&"a")
+	source.current = &"a"
+
+	_check(source.entries.size() == 1, "begin reads it: one map at boot")
+	_check(
+		not director.start_vote(DotVoteClock.REASON_MANUAL).ok and not director.is_voting(),
+		"and one map is nothing to vote for"
+	)
+
+	catalogue.append(["b", "Bravo"])
+	catalogue.append(DotVoteChoice.of(&"c", "Charlie"))
+	catalogue.append(&"d")
+	catalogue.append(["b", "Bravo again"])
+
+	var opened := director.start_vote(DotVoteClock.REASON_MANUAL)
+	var ids := director.ballot.option_ids()
+
+	_check(
+		opened.ok and director.is_voting(),
+		"two maps delivered later: the next ballot opens without the game refreshing anything"
+	)
+	_check(
+		ids.has(&"b") and ids.has(&"c") and ids.has(&"d"),
+		"with the delivered maps on it, from pairs, choices and bare ids (%s)" % str(ids)
+	)
+	_check(
+		source.entries.size() == 4 and source.find(&"b").display_name == "Bravo",
+		"a repeated id is listed once, the first time"
+	)
+
+	# A broken function keeps the list there was.
+	var broken := DotVoteListSource.of(_choices(["x", "y"]))
+	broken.entries_fn = func() -> Variant: return null
+	_check(
+		not broken.refresh().ok and broken.entries.size() == 2,
+		"a function that returns no list keeps the old one"
+	)
+
+	# reload() reads it too, for an operator's "reload the list".
+	catalogue.remove_at(0)
+	_check(
+		source.reload().ok and not source.has(&"a"),
+		"reload() reads the function, and a map taken away leaves the list"
+	)
+
+	# Unset, a list is what it always was.
+	var plain := DotVoteListSource.of(_choices(["p", "q"]))
+	plain.before_ballot()
+	_check(
+		plain.entries.size() == 2 and not plain.refresh().ok,
+		"without a function, entries is the list and nothing re-reads it"
+	)
+
+	_done()
 
 
 func _test_nothing_to_vote_for() -> void:

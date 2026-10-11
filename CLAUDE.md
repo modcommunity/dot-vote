@@ -40,6 +40,8 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 - A pending change carries its own moment (`_pending_moment`); `_ready_to_apply` is the one gate every moment goes through, including the `finish_round` hold. [design](docs/design.md#three-clocks-and-only-one-of-them-is-a-rounds)
 - `option_ids()` is display order and what a typed number indexes; `countable_ids()` (choices first) is what ties are broken in. [design](docs/design.md#four-rules-from-the-parity-work)
 - `round_based` is set only by a host that reports every round end; only a time or score limit waits for the round. [design](docs/design.md#three-clocks-and-only-one-of-them-is-a-rounds)
+- `trigger: manual` hands the host only the SCHEDULED ballot; a passed rock-the-vote opens its own under every trigger, and a host's leftover `clock.expired` handler finds it open (vote_due fires before expired). [design](docs/design.md#manual-is-the-schedule-not-rock-the-vote)
+- API level is `addons/dot_vote/dot_vote_api.gd`; bump LEVEL for anything a game can call.
 - `trigger: round_end` must behave differently from `time_limit` (a held ballot, `is_waiting_for_round_end()`); `rtv_only` and `end_vote: false` never open a ballot at the lead. [history](docs/history.md#the-parity-work)
 - Hibernation pauses everything and wakes with `restart()`, which writes no second history entry. An empty server that does not sleep moves on by `empty_choice`, drawn from `empty_rng`, never `fill_seed`. [design](docs/design.md#an-empty-server-the-clock-sleeps-or-the-server-moves-on-by-itself)
 - `on_no_votes` is a ballot nobody voted in; `empty_choice` is a server nobody is on. Different keys. [design](docs/design.md#an-empty-server-the-clock-sleeps-or-the-server-moves-on-by-itself)
@@ -53,6 +55,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | Any policy at all | `DotVoteRules`, layered like every `DotConfig` (`defaults < file < DOT_VOTE_* < --vote-*`) |
 | A game's own defaults, under an operator's file | `DotVoteRules.layer_over_defaults(file, DotVoteGameSource.running_game_metadata("map_vote"))` |
 | What can be voted for | `DotVoteSource` subclass, or `DotVoteListSource` with a `Callable` |
+| A list that grows after the director is built (delivered maps) | `DotVoteListSource.entries_fn`, re-read at `begin` and before every ballot (`DotVoteSource.before_ballot`) |
 | How many players there are, who is an admin, who is a spectator | `DotVoteDirector.player_count_fn` / `is_admin_fn` / `is_spectator_fn` |
 | What one player's vote is worth | `DotVoteDirector.weight_fn` |
 | What the players are told | `DotVoteDirector.announce_fn` |

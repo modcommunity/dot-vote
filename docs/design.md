@@ -24,6 +24,14 @@ Everything else follows from it. The sources are duck-typed. Per-choice settings
 - **Presentation is not policy.** `option_ids()` is the order a player sees and a typed number indexes; `countable_ids()` is choices-first, always, and is what ties are broken in. `pseudo_options_first` moving "don't change" to the top of a menu must not make every tie go to the status quo.
 - **Every new check is armed**: broken on purpose, the suite re-run, and seen to fire. That includes the settings sweep, which must fire on its own for a setting whose only reader has been removed.
 
+## MANUAL is the schedule, not rock-the-vote
+
+`trigger: manual` is for a game that knows better than a clock when its ballot belongs: a one-round-per-course game opens it a few seconds into the course and applies it at the round's end. What the host owns is the SCHEDULED ballot, so a limit reaching its lead or running out opens nothing. A passed rock-the-vote is not the schedule; it is the players asking now, and `_on_vote_due` opens it under MANUAL exactly as under every other trigger (an admin's `force_rtv` always did).
+
+The games written before this opened the rocked ballot themselves from `clock.expired`, guarded by `director.is_voting()`. That handler cannot double a ballot against this code: the clock emits `vote_due` before `expired`, so the director has already opened the ballot (the guard returns) or started its countdown (the game's `start_vote` is refused with "A vote is about to start"), and when it could not open at all the game's attempt is refused for the same reason and the director's `_vote_due_pending` retries once. The suite runs that handler verbatim against the director.
+
+**A list read at the ballot, not copied at setup.** `DotVoteSource.choices()` was always meant to be fresh, but a `DotVoteListSource` is a copy, and every game whose catalogue grew after boot (delivered maps) had to remember to refresh it, or a server built with one map never opened a ballot. `entries_fn` is the host's list as a function; `before_ballot()` (a no-op on the base) re-reads it, and the director calls that from `begin`, `start_vote` (before `has_alternatives`) and `open_vote`. Re-reading in `choices()` itself was the alternative and is worse: `find` calls `choices()` from views and polls, and every call would rebuild every choice.
+
 ## An empty server: the clock sleeps, or the server moves on by itself
 
 Two halves, one per setting of dot-server's `sv_hibernate_when_empty`:

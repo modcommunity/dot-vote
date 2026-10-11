@@ -21,5 +21,7 @@ Bugs worth recognising if they come back. All parsed cleanly; the rule each left
 
 ## Later
 
+- **Under `trigger: manual`, "Rocked. 1 of 1." and nothing happened.** `_on_vote_due` returned for MANUAL before anything else, a passed rock-the-vote included, so the clock latched with reason rtv and no ballot ever opened. Seven games carried their own `clock.expired` handler to open it. MANUAL now hands the host only the scheduled ballot; the games' handlers are harmless against the fix (see [design](design.md#manual-is-the-schedule-not-rock-the-vote)) and come out once this release is in the shell.
+
 - **The ballot feed re-sent "closed" on every poll after the result.** The suite's "and nothing after" check caught it; the feed holds the result for exactly one poll.
 - **A signal-driven ballot feed kept a departed player's avatar on the board**, because `forget_voter` emits nothing. The feed is polled.

@@ -65,6 +65,14 @@ func reload() -> DotResult:
 	return DotResult.success(0)
 
 
+## Called by [DotVoteDirector] when a choice begins and whenever a ballot is about to be
+## filled. Nothing by default; [DotVoteListSource] re-reads its
+## [member DotVoteListSource.entries_fn] here. A source whose [method choices] is already
+## live has nothing to do.
+func before_ballot() -> void:
+	pass
+
+
 ## Whether this source can act on a result at all.
 ##
 ## [b]A source that only lists is legitimate[/b] and is what a client-side mirror of a
