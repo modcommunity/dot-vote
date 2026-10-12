@@ -12,5 +12,7 @@ extends RefCounted
 # 3: DotVoteDirector.round_in_progress_fn; finish_round holds nothing while no round is live.
 # 4: DotVoteDirector.people_fn and display_name(); lines about a player name them, not
 #    their id; DotVoteBallotFeed.people_fn is handed to a director that has none.
-const LEVEL := 4
+# 5: the map menu's server half: DotVoteMapMenu (`mapmenu`, `sv_map_menu_flag`, change_fn,
+#    rows_fn, notice_fn), DotVoteCommands.map_menu and with_map_menu.
+const LEVEL := 5
 const OLDEST := 1

@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 505
+const CHECKS := 518
 
 var _passed := 0
 var _failed := 0
@@ -85,6 +85,7 @@ func _run() -> void:
 	_test_every_layer_reaches_a_ballot()
 	await _test_real_game_manager()
 	await _test_real_map_catalogue()
+	await _test_map_menu()
 
 	DotPaths.remove_tree(DATA)
 
@@ -111,6 +112,111 @@ func _run() -> void:
 		get_tree().quit(1)
 		return
 	get_tree().quit(1 if _failed > 0 else 0)
+
+
+# --- The map menu ----------------------------------------------------------
+
+## M in every game: the server half, on a real dot-server console with real contexts, so the
+## permission check is dot-server's own and not a fake that agrees with this file.
+func _test_map_menu() -> void:
+	_section("The map menu: the owner's flag changes, anybody else votes")
+
+	if not ResourceLoader.exists("res://addons/dot_server/console/dot_console.gd"):
+		_check(false, "dot-server is present so the map menu can be run", "addons/dot_server is not linked")
+		_done()
+		return
+
+	var applied: Array = []
+	var source := DotVoteListSource.of(_choices(["atrium", "yard", "docks", "foundry"]))
+	source.apply_fn = func(id: StringName) -> DotResult:
+		applied.append(id)
+		return DotResult.success(id)
+	source.entries[2].group = &"capture"
+	source.entries[3].meta = {"thumbnail": "res://maps/foundry.png"}
+	var rules := _rules()
+	rules.vote_cooldown_sec = 0.0
+	rules.rtv_delay_sec = 0.0
+	var director := _make_director(rules, source)
+	director.begin(&"atrium")
+	var announced: Array = []
+	director.announce_fn = func(line: String) -> void: announced.append(line)
+
+	var console: Node = (load("res://addons/dot_server/console/dot_console.gd") as GDScript).new()
+	add_child(console)
+	var commands := DotVoteCommands.install(console, director)
+	var sent: Array = []
+	commands.map_menu.notice_fn = func(_ctx: Object, data: Dictionary) -> bool:
+		sent.append(data)
+		return true
+	var cmd: Variant = console.call("find_command", "mapmenu")
+	_check(cmd != null and str((cmd as Object).get("permission")) == "", "`mapmenu` is registered, open to everybody: the gate is inside")
+	_check(commands.map_menu.cvar != null and commands.map_menu.required_flag() == "generic",
+		"with sv_map_menu_flag, staff (generic) by default")
+
+	var ctx_script: GDScript = load("res://addons/dot_server/console/dot_cmd_context.gd")
+	var replies := PackedStringArray()
+	var player: Object = ctx_script.new()
+	player.set("source", 3)
+	player.set("reply_sink", func(t: String) -> void: replies.append(t))
+	var moderator: Object = ctx_script.new()
+	moderator.set("source", 3)
+	moderator.set("permissions", PackedStringArray(["generic", "kick", "mute"]))
+	moderator.set("reply_sink", func(t: String) -> void: replies.append(t))
+
+	console.call("execute", "mapmenu", player)
+	var offer: Dictionary = sent.back() if not sent.is_empty() else {}
+	var maps: Array = offer.get("maps", [])
+	_check(maps.size() == 4 and bool(maps[0]["current"]) and str(maps[2].get("mode", "")) == "Capture"
+		and str(maps[3].get("thumbnail", "")) == "res://maps/foundry.png",
+		"the list: every map, the current one marked, a mode and a picture where the choice has them")
+	_check(offer.get("allowed") == false and offer.get("vote") == true and offer.get("flag") == "generic",
+		"a player without the flag is offered a vote, and told which flag it would take")
+
+	console.call("execute", "mapmenu", moderator)
+	_check(bool((sent.back() as Dictionary).get("allowed", false)), "a moderator (generic) is allowed to change it")
+	console.call("execute", "mapmenu yard", moderator)
+	await get_tree().process_frame
+	_check(applied == [&"yard"], "and choosing changes it through the game's own apply (%s)" % str(applied))
+	_check(str(((sent.back() as Dictionary).get("result", {}) as Dictionary).get("how", "")) == "changed"
+		and replies[replies.size() - 1] == "Changing to Yard." and announced.size() == 1,
+		"said to the moderator on screen and in chat, and announced to everybody")
+
+	director.begin(&"yard")
+	var now_ids: Array = []
+	commands.map_menu.change_fn = func(id: StringName) -> DotResult:
+		now_ids.append(id)
+		return DotResult.success(id)
+	console.call("execute", "mapmenu docks", moderator)
+	await get_tree().process_frame
+	_check(now_ids == [&"docks"] and applied.size() == 1, "a game's change_fn (change now, not next round) is used when it gives one")
+
+	console.call("execute", "sv_map_menu_flag changemap", null)
+	console.call("execute", "mapmenu foundry", moderator)
+	await get_tree().process_frame
+	var result: Dictionary = (sent.back() as Dictionary).get("result", {})
+	_check(now_ids.size() == 1 and str(result.get("how", "")) == "voted" and director.nominated_ids().has(&"foundry"),
+		"the owner narrows it to changemap: the moderator's choice is now a nomination (%s)" % str(result.get("text", "")))
+	_check(str(result.get("text", "")).contains("Rocked the vote"), "and their rock-the-vote")
+
+	rules.enabled = false
+	console.call("execute", "mapmenu atrium", player)
+	await get_tree().process_frame
+	result = (sent.back() as Dictionary).get("result", {})
+	_check(str(result.get("how", "")) == "refused" and str(result.get("text", "")).contains("'changemap'")
+		and str(result.get("text", "")).contains("voting is off"), "with voting off a player is refused, and told why")
+	console.call("execute", "mapmenu nowhere", moderator)
+	await get_tree().process_frame
+	_check(str(((sent.back() as Dictionary).get("result", {}) as Dictionary).get("how", "")) == "refused", "a map that does not exist is refused")
+	rules.enabled = true
+
+	console.call("execute", "sv_map_menu_flag \"\"", null)
+	console.call("execute", "mapmenu", player)
+	_check(commands.map_menu.required_flag() == "" and bool((sent.back() as Dictionary).get("allowed", false)),
+		"an empty flag lets anybody change it")
+
+	console.queue_free()
+	director.queue_free()
+	_done()
 
 
 # --- Harness ---------------------------------------------------------------

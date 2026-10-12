@@ -20,7 +20,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | --- | --- |
 | `addons/dot_vote/core/` | `DotVoteChoice` (an id, a name, a ballot's facts), `DotVoteResult`, `DotVoteRules` (every policy, a `DotConfig`) |
 | `addons/dot_vote/runtime/` | `DotVoteDirector` (the engine), `DotVoteBallot`, `DotVoteClock`, `DotVoteNominations`, `DotVoteHistory`, `DotVoteSource` / `DotVoteListSource`, and the client views `DotVoteClockView`, `DotVoteBallotView`, `DotVoteBallotFeed` |
-| `addons/dot_vote/integrations/` | `DotVoteCommands`, `DotVoteMapSource` (dot-map), `DotVoteGameSource` (dot-server's `DotGameManager`) |
+| `addons/dot_vote/integrations/` | `DotVoteCommands`, `DotVoteMapMenu` (the M menu's server half, installed with the commands), `DotVoteMapSource` (dot-map), `DotVoteGameSource` (dot-server's `DotGameManager`) |
 | `examples/vote_selftest.tscn` | the suite; `examples/fixtures/` its data |
 
 ## Running and testing
@@ -48,6 +48,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 - `on_no_votes` is a ballot nobody voted in; `empty_choice` is a server nobody is on. Different keys. [design](docs/design.md#an-empty-server-the-clock-sleeps-or-the-server-moves-on-by-itself)
 - `DotVoteBallotFeed` is polled, compares by hash ignoring seconds, and holds `vote_closed` for exactly one poll. [design](docs/design.md#a-ballot-a-player-can-click)
 - A line about a player names them through `display_name(voter)`, never the voter id. [history](docs/history.md#later)
+- `mapmenu` is open to everybody and gated inside by `sv_map_menu_flag` (`generic`, staff, by default): the flag changes the map now, anybody else nominates and rocks the vote. Its server half is installed by `DotVoteCommands.bind`; a game whose apply means "next round" sets `map_menu.change_fn` to change now. `DotVoteMapMenu` holds its commands weakly (they hold it). [design](docs/design.md#the-map-menu)
 - Extend comes off the ballot when the extensions are used up; nominations are refused while a ballot is open. [history](docs/history.md#the-parity-work)
 
 ## Where a game plugs in
@@ -74,6 +75,8 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | What an empty server's limit does when nothing sleeps | `DotVoteRules.empty_choice` (`random`, `rotation`, `wait`); `DotVoteDirector.empty_rng` |
 | What a ballot nobody voted in decides | `DotVoteRules.on_no_votes` (`keep`, `random`, `rotation`) |
 | Command names | `DotVoteCommands.prefix` / `names` |
+| Who may change the map from the M menu | `sv_map_menu_flag` (an admin flag; empty is everybody) |
+| How the M menu changes the map now, and what its rows say | `DotVoteCommands.map_menu.change_fn` / `rows_fn` |
 | How a command context becomes a voter | `DotVoteCommands.voter_fn` |
 | How what a player typed becomes a choice id | `DotVoteCommands.resolve_fn` (a game whose ids carry a prefix) |
 

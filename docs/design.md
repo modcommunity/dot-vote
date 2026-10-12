@@ -80,3 +80,13 @@ Three sections matter more than the rest:
 
 - **"Every setting is read by something"** runs the family's mechanical detector over `DotVoteRules`. That many settings in one resource is either this addon's best feature or a pile of the family's most repeated bug, and the check is the difference. It matches `rules.<key>` across the addon and bare identifiers inside the rules themselves, rather than any occurrence: `DotVoteChoice` has an `enabled` too, and a crude grep would report `DotVoteRules.enabled` as read by a file that has never heard of it.
 - **The two integration sections** run a real `DotServer` and a real `DotMapSession` and change what they are running. They are written entirely through `load()` and `set()`/`call()`, so the suite parses with neither addon linked and, more to the point, exercises exactly the reflection the sources use. If the duck typing is wrong, this is the only place it can show. Without the links those sections **fail loudly** rather than being skipped, because "0 failures" from a suite that ran nothing is how a family ships two ends that never met.
+
+## The map menu
+
+Every game has a map menu on M (dot-menu's `DotMenuMaps`), and on a server its other half is here, because every game already has a director over a source that lists its maps and applies one. `DotVoteCommands.bind` installs `DotVoteMapMenu`, so no game wires it.
+
+- `mapmenu` answers with a `map_menu` notice: `{maps, allowed, flag, vote, where}`. `mapmenu <id>` changes the map for a player holding `sv_map_menu_flag` (default `generic`, which every staff group from moderator up holds, so "moderator or above" without an opinion here about what a moderator is), and for anybody else nominates the map and rocks the vote (or casts a vote for it when a ballot is open). The result goes back as a notice and a reply line.
+- **The command is open and the gate is inside**, not the console's `permission`: a player without the flag still gets the list and the vote. The flag is read on every request, so `sv_map_menu_flag changemap` at the console applies to the next press; empty lets anybody change the map.
+- **"Now", not "next round".** Most round-based games' source applies by setting the next round's map, which is right for a ballot and wrong for an admin pressing M. A game sets `map_menu.change_fn` to its immediate change; without one the source's apply is used.
+- A change while a ballot is open is refused: the ballot decides, and `endvote` closes it first.
+

@@ -40,6 +40,7 @@ const DEFAULTS := {
 	"nominate_add": "nominate_addmap",
 	"forcertv": "forcertv",
 	"reload": "votereload",
+	"mapmenu": "mapmenu",
 }
 
 ## Which of the above are also typable in chat as [code]!name[/code].
@@ -54,6 +55,14 @@ const ADMIN := [
 ]
 
 var director: DotVoteDirector = null
+
+## The map menu's server half (`mapmenu`, `sv_map_menu_flag`), installed by [method bind]
+## so every game with a vote has it. See [DotVoteMapMenu]; a game sets its `change_fn`.
+var map_menu: DotVoteMapMenu = null
+
+## Install the map menu with the rest. Off for a vote over something that is not a map (a
+## server's next game, where M has nothing to change).
+var with_map_menu: bool = true
 
 ## Prepended to every command name. [code]"sv_"[/code] gives [code]sv_rtv[/code].
 var prefix: String = ""
@@ -155,6 +164,12 @@ func bind(host: Object) -> DotResult:
 				(registered_command as Object).call("with_chat")
 
 		registered.append(full)
+
+	if with_map_menu:
+		if map_menu == null:
+			map_menu = DotVoteMapMenu.new()
+		map_menu.commands = self
+		map_menu.bind(host, adder)
 
 	DotLog.info(CHANNEL, "commands registered", {"count": registered.size()})
 
