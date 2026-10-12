@@ -87,6 +87,14 @@ func bind(host: Object, adder: String) -> void:
 		(registered_command as Object).call("with_chat")
 	commands.registered.append(full)
 
+	# One cvar per server: a second director's menu (a game reloaded, a module beside it) reads
+	# the one already there rather than registering it twice, which the console warns about.
+	var console: Variant = host if host.has_method("find_cvar") else host.get("console")
+	if console is Object and (console as Object).has_method("find_cvar"):
+		var existing: Variant = (console as Object).call("find_cvar", FLAG_CVAR)
+		if existing is Object:
+			cvar = existing
+			return
 	var cvar_adder := "add_cvar" if host.has_method("add_cvar") else ("cvar" if host.has_method("cvar") else "")
 	if cvar_adder != "":
 		var made: Variant = host.call(cvar_adder, FLAG_CVAR, DEFAULT_FLAG,
