@@ -38,8 +38,15 @@ const FLAG_CVAR := "sv_map_menu_flag"
 ## dot-server's `DotAdminFlags.GENERIC`, spelled out (see [DotVoteCommands.admin_permission]).
 const DEFAULT_FLAG := "generic"
 
-## Rows sent at most: a notice carries 8 KB and a page is seven rows.
-const MAX_ROWS := 80
+## Rows listed at most. A notice carries 8 KB, so a long list goes out in parts
+## ([constant PART_BYTES] each) that the client puts back together; this only bounds a list
+## nobody could page through.
+const MAX_ROWS := 2000
+
+## Encoded bytes of rows per notice, under dot-server's 8 KB `MAX_DATA_BYTES` with room for
+## the rest of the answer. Found on a timer server with a few hundred maps: one notice of
+## them all was over the limit and dropped whole, so M opened nothing.
+const PART_BYTES := 6500
 
 const NOTICE_SCRIPT := "res://addons/dot_server/net/dot_notice.gd"
 
@@ -237,7 +244,7 @@ func _cmd(ctx: Object) -> void:
 	var args := commands._args(ctx)
 	if args.is_empty():
 		var data := offer(ctx)
-		if not _send(ctx, data):
+		if not _send_offer(ctx, data):
 			# A console, or a client with no notices: the list as lines.
 			var lines := PackedStringArray()
 			for r: Dictionary in data["maps"]:
@@ -247,6 +254,37 @@ func _cmd(ctx: Object) -> void:
 	var result: Dictionary = await choose(ctx, commands._resolve(args[0]))
 	ctx.call("reply", str(result["text"]))
 	var _sent := _send(ctx, {"result": result})
+
+
+## The offer in as many notices as it takes: `{maps, part, parts, ...}` each, the rest of the
+## answer repeated so any part can be read alone.
+func _send_offer(ctx: Object, data: Dictionary) -> bool:
+	var chunks := chunks_of(data["maps"] as Array)
+	var sent := true
+	for i in range(chunks.size()):
+		var part := data.duplicate()
+		part["maps"] = chunks[i]
+		part["part"] = i + 1
+		part["parts"] = chunks.size()
+		sent = _send(ctx, part) and sent
+	return sent
+
+
+## [param rows] cut into lists that each encode under [constant PART_BYTES]; at least one.
+static func chunks_of(rows: Array) -> Array:
+	var out: Array = []
+	var current: Array = []
+	var size := 0
+	for row: Variant in rows:
+		var bytes := var_to_bytes(row).size()
+		if not current.is_empty() and size + bytes > PART_BYTES:
+			out.append(current)
+			current = []
+			size = 0
+		current.append(row)
+		size += bytes
+	out.append(current)
+	return out
 
 
 func _send(ctx: Object, data: Dictionary) -> bool:

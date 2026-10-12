@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 518
+const CHECKS := 519
 
 var _passed := 0
 var _failed := 0
@@ -213,6 +213,20 @@ func _test_map_menu() -> void:
 	console.call("execute", "mapmenu", player)
 	_check(commands.map_menu.required_flag() == "" and bool((sent.back() as Dictionary).get("allowed", false)),
 		"an empty flag lets anybody change it")
+
+	# A server with hundreds of maps: one notice carries 8 KB, so the list goes out in parts
+	# a client puts back together, every part under the limit and no row lost.
+	var many: Array = []
+	for i in 400:
+		many.append({"id": "surf_long_map_name_%03d" % i, "name": "Surf: A Long Map Name %d" % i, "mode": "Surf", "detail": "tier %d" % (i % 6), "current": false})
+	var parts := DotVoteMapMenu.chunks_of(many)
+	var counted := 0
+	var biggest := 0
+	for part: Array in parts:
+		counted += part.size()
+		biggest = maxi(biggest, var_to_bytes({"maps": part, "allowed": true, "flag": "generic", "vote": true, "where": "this server", "part": 1, "parts": parts.size()}).size())
+	_check(parts.size() > 1 and counted == 400 and biggest < 8192,
+		"a long list goes out in parts, each under a notice's 8 KB, none lost (%d parts, %d bytes at most)" % [parts.size(), biggest])
 
 	console.queue_free()
 	director.queue_free()
