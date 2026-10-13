@@ -182,8 +182,10 @@ func offer(ctx: Object) -> Dictionary:
 ## Returns `{ok, text, how}`, `how` one of `changed`, `voted`, `refused`.
 func choose(ctx: Object, id: StringName) -> Dictionary:
 	var director := commands.director
-	if director == null or director.source == null or not director.source.has(id):
+	if director == null or director.source == null:
 		return _result(false, "There is no map called '%s'." % id, "refused")
+	if not director.source.has(id):
+		return _result(false, unavailable_text(id), "refused")
 	var label := director.option_label(id)
 
 	if may_change(ctx):
@@ -227,6 +229,23 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 	else:
 		parts.append(rocked.error.message)
 	return _result(nominated.ok or rocked.ok, " ".join(parts), "voted" if nominated.ok or rocked.ok else "refused")
+
+
+## Why [param id] is refused when the source does not offer it now.
+##
+## [b]Not "there is no map called".[/b] A list a player opened before a change can name an id
+## the source offered then and does not now: arena offers a team mode on a map with team
+## spawns, and not after a change to one without. Calling that a missing map sent a reader
+## looking for a typo. A source that knows the real reason says it through
+## `unavailable_reason(id) -> String` (duck-typed, empty for "no idea"); otherwise the text
+## says the list may be out of date, which it is whenever the id was once on it.
+func unavailable_text(id: StringName) -> String:
+	var source := commands.director.source if commands != null and commands.director != null else null
+	if source != null and source.has_method(&"unavailable_reason"):
+		var reason := str(source.call(&"unavailable_reason", id))
+		if reason != "":
+			return reason
+	return "'%s' is not on offer here now. Open the list again: it may be out of date." % id
 
 
 func _result(ok: bool, text: String, how: String) -> Dictionary:

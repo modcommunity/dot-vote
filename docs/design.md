@@ -90,4 +90,5 @@ Every game has a map menu on M (dot-menu's `DotMenuMaps`), and on a server its o
 - **"Now", not "next round".** Most round-based games' source applies by setting the next round's map, which is right for a ballot and wrong for an admin pressing M. A game sets `map_menu.change_fn` to its immediate change; without one the source's apply is used.
 - **A long list goes out in parts** (`chunks_of`, `PART_BYTES` each, `part`/`parts` on every one): dot-server drops a notice over 8 KB whole, and a timer server's few hundred maps are well over it.
 - A change while a ballot is open is refused: the ballot decides, and `endvote` closes it first.
+- **An id the source does not offer now is refused with a reason, not "there is no map called".** A list opened before a change can name an id that was on offer then (arena's team modes, until a change to a map without team spawns). A source may say why through a duck-typed `unavailable_reason(id) -> String`; otherwise the text says the list may be out of date.
 

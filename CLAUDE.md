@@ -77,6 +77,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | Command names | `DotVoteCommands.prefix` / `names` |
 | Who may change the map from the M menu | `sv_map_menu_flag` (an admin flag; empty is everybody) |
 | How the M menu changes the map now, and what its rows say | `DotVoteCommands.map_menu.change_fn` / `rows_fn` |
+| Why the M menu refuses an id the source does not offer now | the source's duck-typed `unavailable_reason(id) -> String` |
 | How a command context becomes a voter | `DotVoteCommands.voter_fn` |
 | How what a player typed becomes a choice id | `DotVoteCommands.resolve_fn` (a game whose ids carry a prefix) |
 

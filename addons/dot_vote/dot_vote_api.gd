@@ -14,5 +14,7 @@ extends RefCounted
 #    their id; DotVoteBallotFeed.people_fn is handed to a director that has none.
 # 5: the map menu's server half: DotVoteMapMenu (`mapmenu`, `sv_map_menu_flag`, change_fn,
 #    rows_fn, notice_fn), DotVoteCommands.map_menu and with_map_menu.
-const LEVEL := 5
+# 6: DotVoteMapMenu.unavailable_text(); a source's optional unavailable_reason(id) says why
+#    the menu refuses an id it does not offer now.
+const LEVEL := 6
 const OLDEST := 1

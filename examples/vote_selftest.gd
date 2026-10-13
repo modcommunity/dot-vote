@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 519
+const CHECKS := 520
 
 var _passed := 0
 var _failed := 0
@@ -206,7 +206,19 @@ func _test_map_menu() -> void:
 		and str(result.get("text", "")).contains("voting is off"), "with voting off a player is refused, and told why")
 	console.call("execute", "mapmenu nowhere", moderator)
 	await get_tree().process_frame
-	_check(str(((sent.back() as Dictionary).get("result", {}) as Dictionary).get("how", "")) == "refused", "a map that does not exist is refused")
+	var refusal: Dictionary = (sent.back() as Dictionary).get("result", {})
+	_check(str(refusal.get("how", "")) == "refused" and str(refusal.get("text", "")).contains("not on offer here now"),
+		"a map not on offer is refused, and the text says the list may be out of date (%s)" % str(refusal.get("text", "")))
+	# A source that knows why says so: arena's team mode on a map with no team spawns.
+	var reasoned := _ReasonSource.new()
+	reasoned.entries = source.entries
+	director.source = reasoned
+	console.call("execute", "mapmenu nowhere", moderator)
+	await get_tree().process_frame
+	refusal = (sent.back() as Dictionary).get("result", {})
+	_check(str(refusal.get("how", "")) == "refused" and str(refusal.get("text", "")) == "nowhere cannot run here.",
+		"a source's unavailable_reason is the refusal's text (%s)" % str(refusal.get("text", "")))
+	director.source = source
 	rules.enabled = true
 
 	console.call("execute", "sv_map_menu_flag \"\"", null)
@@ -231,6 +243,12 @@ func _test_map_menu() -> void:
 	console.queue_free()
 	director.queue_free()
 	_done()
+
+
+## A source with a reason for what it does not offer, as a game's would be.
+class _ReasonSource extends DotVoteListSource:
+	func unavailable_reason(id: StringName) -> String:
+		return "%s cannot run here." % id
 
 
 # --- Harness ---------------------------------------------------------------
