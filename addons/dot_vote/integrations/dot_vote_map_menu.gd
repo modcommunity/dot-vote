@@ -160,8 +160,23 @@ static func _bind_cvar(host: Object, cvar_name: String, default_value: String, h
 	if cvar_adder != "":
 		var made: Variant = host.call(cvar_adder, cvar_name, default_value, help)
 		if made is Object:
+			_from_command_line(console, made as Object, cvar_name)
 			return made
 	return null
+
+
+## `+sv_map_menu_flag anyone` on the server's command line, applied now. The console runs its
+## command line at boot, before a game's module (and so this) has registered anything, so a
+## value given there for one of these was dropped as an unknown command. `./game.sh online`
+## (play.sh) gives its server, which only this machine can reach, `anyone` this way.
+static func _from_command_line(console: Variant, made: Object, cvar_name: String) -> void:
+	if not (console is Object) or not (console as Object).has_method("command_line_statements") \
+			or not made.has_method("set_value"):
+		return
+	for statement: String in (console as Object).call("command_line_statements"):
+		var tokens := statement.strip_edges().split(" ", false, 1)
+		if tokens.size() == 2 and tokens[0] == cvar_name:
+			var _set: Variant = made.call("set_value", tokens[1].strip_edges().trim_prefix("\"").trim_suffix("\""))
 
 
 static func _cvar_string(c: Object) -> Variant:

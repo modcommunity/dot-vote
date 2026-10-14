@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 533
+const CHECKS := 534
 
 var _passed := 0
 var _failed := 0
@@ -348,6 +348,19 @@ func _test_map_menu_humans(console: Node, commands: DotVoteCommands, director: D
 	console.call("execute", "sv_map_menu_alone 1", null)
 	menu.humans_fn = Callable()
 	player.set("session", null)
+
+	# `+sv_map_menu_flag anyone` on a server's command line runs before any module registers
+	# the cvar; the menu applies it when it does (play.sh's local server relies on it).
+	var argv := _ArgvConsole.new()
+	var flag_cvar: Object = (load("res://addons/dot_server/console/dot_convar.gd") as GDScript).new(DotVoteMapMenu.FLAG_CVAR, "generic")
+	DotVoteMapMenu._from_command_line(argv, flag_cvar, DotVoteMapMenu.FLAG_CVAR)
+	_check(str(flag_cvar.call("get_string")) == "anyone", "a value given on the command line reaches the cvar when it is registered late")
+
+
+## A console whose command line says `+sv_map_menu_flag anyone`.
+class _ArgvConsole extends RefCounted:
+	func command_line_statements() -> PackedStringArray:
+		return PackedStringArray(["sv_tickrate 128", "sv_map_menu_flag \"anyone\""])
 
 
 ## A source with a reason for what it does not offer, as a game's would be.
