@@ -16,5 +16,10 @@ extends RefCounted
 #    rows_fn, notice_fn), DotVoteCommands.map_menu and with_map_menu.
 # 6: DotVoteMapMenu.unavailable_text(); a source's optional unavailable_reason(id) says why
 #    the menu refuses an id it does not offer now.
-const LEVEL := 6
+# 7: the map menu fails closed and counts humans: sv_map_menu_flag empty is staff and
+#    `anyone` is everybody; sv_map_menu_alone (the only human may change directly) and
+#    sv_map_menu_vote_min (humans before a menu choice rocks the vote); DotVoteMapMenu
+#    humans_fn, humans(), is_staff(), is_alone(), alone_allowed(), min_voters(); the
+#    listen host's own (local) session may change; an offer carries `alone`.
+const LEVEL := 7
 const OLDEST := 1

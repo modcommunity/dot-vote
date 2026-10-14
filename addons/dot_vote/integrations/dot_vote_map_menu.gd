@@ -20,9 +20,34 @@ extends RefCounted
 ##
 ## [b]The flag is the owner's.[/b] `sv_map_menu_flag` names it, `generic` by default: the
 ## flag every staff group holds from moderator up, so "moderator or above" without this addon
-## having an opinion about what a moderator is. `changemap` narrows it to admins; an empty
-## value lets anybody change the map (a private server among friends). Read on every request,
-## so a change at the console applies to the next M press.
+## having an opinion about what a moderator is. `changemap` narrows it to admins; `anyone`
+## lets anybody change the map (a private server among friends, or `./game.sh online` on the
+## player's own machine). Read on every request, so a change at the console applies to the
+## next M press.
+##
+## [b]It fails closed.[/b] An empty value, a cvar that was never registered, and a value that
+## names nothing all mean staff only, never "anybody". Until 2026-10-14 an empty value meant
+## anybody, which made a blanked config line, or a panel variable left empty, a server where
+## every guest changed the map with one key. Letting everybody in is a word an owner writes
+## ([constant ANYONE]), not the absence of one.
+##
+## [b]Everybody else gets a vote of the humans here.[/b] A choice from a player without the
+## flag nominates the map and rocks the vote only when at least `sv_map_menu_vote_min` humans
+## (2 by default, never fewer) are playing, and never in a way that could pass without a
+## majority of them: one player on an empty server rocking the vote is not "the server
+## agreed". Humans are the server's playing sessions; bots are not sessions in this family,
+## so they never count (a game that keeps its own count says so through [member humans_fn]).
+##
+## [b]Alone, a player may change it.[/b] `sv_map_menu_alone` (1 by default): the only human
+## on the server changes the map directly, because there is nobody to ask and nobody to harm,
+## and a lone runner on an empty timer server should not wait out a clock. The moment a
+## second human is playing, it is a vote again. 0 makes it staff only plus votes.
+##
+## [b]The player running the server is its owner.[/b] A session with no transport behind it
+## ([code]DotClientSession.local[/code]) is the listen host's own player, in the same process
+## as the server, and has the change whatever the flag says. A remote client never is one: it
+## arrives through the listener. (Not "connected from 127.0.0.1": behind a TLS proxy every
+## browser on a public server arrives from loopback.)
 ##
 ## [b]The client reads a notice, not chat.[/b] The answer is a notice on the `map_menu` topic
 ## with the list in `data` (dot-server's notice is the one message a server can send the
@@ -37,6 +62,14 @@ const TOPIC := &"map_menu"
 const FLAG_CVAR := "sv_map_menu_flag"
 ## dot-server's `DotAdminFlags.GENERIC`, spelled out (see [DotVoteCommands.admin_permission]).
 const DEFAULT_FLAG := "generic"
+## The value of `sv_map_menu_flag` that lets everybody change the map directly.
+const ANYONE := "anyone"
+
+## `1`: the only human on the server changes the map directly. `0`: staff only, plus votes.
+const ALONE_CVAR := "sv_map_menu_alone"
+## The fewest humans playing before a choice from the menu rocks the vote. Never below 2.
+const VOTE_MIN_CVAR := "sv_map_menu_vote_min"
+const DEFAULT_VOTE_MIN := 2
 
 ## Rows listed at most. A notice carries 8 KB, so a long list goes out in parts
 ## ([constant PART_BYTES] each) that the client puts back together; this only bounds a list
@@ -64,6 +97,19 @@ var flag: String = DEFAULT_FLAG
 
 ## The cvar, when the host could register one.
 var cvar: Object = null
+
+## [constant ALONE_CVAR]'s value when there is no console to hold it.
+var alone: bool = true
+var alone_cvar: Object = null
+
+## [constant VOTE_MIN_CVAR]'s value when there is no console to hold it.
+var vote_min: int = DEFAULT_VOTE_MIN
+var vote_min_cvar: Object = null
+
+## `func() -> int`: how many humans are playing. Unset counts the playing sessions of the
+## server registered as `dot_server` (bots are not sessions). A game whose own count is the
+## better answer sets it; it must never count a bot.
+var humans_fn: Callable = Callable()
 
 ## `func(id: StringName) -> DotResult` (may await): change to [param id] now. Unset is the
 ## source's own apply, which in a round-based game is often "next round".
@@ -94,37 +140,107 @@ func bind(host: Object, adder: String) -> void:
 		(registered_command as Object).call("with_chat")
 	commands.registered.append(full)
 
-	# One cvar per server: a second director's menu (a game reloaded, a module beside it) reads
-	# the one already there rather than registering it twice, which the console warns about.
+	cvar = _bind_cvar(host, FLAG_CVAR, DEFAULT_FLAG,
+		"The admin flag that may change the map from the M menu; anybody else gets a vote. 'anyone': everybody. Empty: staff (generic).")
+	alone_cvar = _bind_cvar(host, ALONE_CVAR, "1" if alone else "0",
+		"1: the only human on the server may change the map from the M menu without a vote. 0: staff only, plus votes.")
+	vote_min_cvar = _bind_cvar(host, VOTE_MIN_CVAR, str(vote_min),
+		"The fewest humans playing before a choice from the M menu rocks the vote (never below 2).")
+
+
+## One cvar per server: a second director's menu (a game reloaded, a module beside it) reads
+## the one already there rather than registering it twice, which the console warns about.
+static func _bind_cvar(host: Object, cvar_name: String, default_value: String, help: String) -> Object:
 	var console: Variant = host if host.has_method("find_cvar") else host.get("console")
 	if console is Object and (console as Object).has_method("find_cvar"):
-		var existing: Variant = (console as Object).call("find_cvar", FLAG_CVAR)
+		var existing: Variant = (console as Object).call("find_cvar", cvar_name)
 		if existing is Object:
-			cvar = existing
-			return
+			return existing
 	var cvar_adder := "add_cvar" if host.has_method("add_cvar") else ("cvar" if host.has_method("cvar") else "")
 	if cvar_adder != "":
-		var made: Variant = host.call(cvar_adder, FLAG_CVAR, DEFAULT_FLAG,
-			"The admin flag that may change the map from the M menu; anybody else gets a vote. Empty: everybody.")
+		var made: Variant = host.call(cvar_adder, cvar_name, default_value, help)
 		if made is Object:
-			cvar = made
+			return made
+	return null
 
 
-## The flag a direct change needs right now.
+static func _cvar_string(c: Object) -> Variant:
+	if c != null and is_instance_valid(c) and c.has_method("get_string"):
+		return str(c.call("get_string")).strip_edges()
+	return null
+
+
+## The flag a direct change needs right now: never empty. Empty, unset or unregistered is
+## [constant DEFAULT_FLAG] (staff); [constant ANYONE] is everybody.
 func required_flag() -> String:
-	if cvar != null and is_instance_valid(cvar) and cvar.has_method("get_string"):
-		return str(cvar.call("get_string")).strip_edges().to_lower()
-	return flag
+	var value: Variant = _cvar_string(cvar)
+	var named := (str(value) if value != null else flag).strip_edges().to_lower()
+	return named if named != "" else DEFAULT_FLAG
 
 
-## Whether the player behind [param ctx] may change the map directly.
-func may_change(ctx: Object) -> bool:
+## Whether the only human on the server may change the map directly, right now.
+func alone_allowed() -> bool:
+	var value: Variant = _cvar_string(alone_cvar)
+	if value == null:
+		return alone
+	return str(value) in ["1", "true", "yes", "on"]
+
+
+## The fewest humans before a menu choice rocks the vote: [constant VOTE_MIN_CVAR], at least 2.
+func min_voters() -> int:
+	var value: Variant = _cvar_string(vote_min_cvar)
+	var n := int(str(value)) if value != null and str(value).is_valid_int() else vote_min
+	return maxi(n, DEFAULT_VOTE_MIN)
+
+
+## Humans playing on this server now, or -1 when nothing here can say.
+func humans() -> int:
+	if humans_fn.is_valid():
+		return int(humans_fn.call())
+	var server: Object = DotRegistry.get_service(&"dot_server")
+	if server != null and server.has_method("playing_sessions"):
+		return (server.call("playing_sessions") as Array).size()
+	return -1
+
+
+## Whether the player behind [param ctx] holds the owner's flag, or runs the server.
+func is_staff(ctx: Object) -> bool:
+	if ctx == null:
+		return false
+	if _is_host(ctx):
+		return true
 	var needed := required_flag()
-	if needed == "":
+	if needed == ANYONE:
 		return true
 	if ctx.has_method("has_permission"):
 		return bool(ctx.call("has_permission", needed))
 	return false
+
+
+## Whether the player behind [param ctx] may change the map directly: staff, the host, or the
+## only human here while [constant ALONE_CVAR] is on.
+func may_change(ctx: Object) -> bool:
+	return is_staff(ctx) or is_alone(ctx)
+
+
+## The only human playing, with the owner's [constant ALONE_CVAR] on. Fails closed: a count
+## nothing can give is not "alone", and neither is a context with no session (a console has
+## its own root).
+func is_alone(ctx: Object) -> bool:
+	if ctx == null or not alone_allowed():
+		return false
+	var session: Variant = ctx.get("session")
+	if not (session is Object):
+		return false
+	var n := humans()
+	return n >= 0 and n <= 1
+
+
+## The listen host's own player: a session with no transport, adopted by the host in its own
+## process. Never a remote client, which always arrives through the listener.
+static func _is_host(ctx: Object) -> bool:
+	var session: Variant = ctx.get("session")
+	return session is Object and bool((session as Object).get("local"))
 
 
 func vote_available() -> bool:
@@ -174,7 +290,8 @@ static func _thumbnail(choice: DotVoteChoice) -> String:
 
 ## What the player behind [param ctx] is offered.
 func offer(ctx: Object) -> Dictionary:
-	last_offer = {"maps": rows(), "allowed": may_change(ctx), "flag": required_flag(), "vote": vote_available(), "where": where}
+	last_offer = {"maps": rows(), "allowed": may_change(ctx), "flag": required_flag(), "vote": vote_available(), "where": where,
+		"alone": is_alone(ctx) and not is_staff(ctx)}
 	return last_offer
 
 
@@ -202,7 +319,8 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 			changed = DotResult.fail(DotError.CODE_UNSUPPORTED, "This game cannot change the map from here.")
 		if changed == null or not changed.ok:
 			return _result(false, changed.error.message if changed != null and changed.error != null else "The change failed.", "refused")
-		DotLog.info(CHANNEL, "map changed from the menu", {"map": String(id), "by": _who(ctx)})
+		var why := "staff" if is_staff(ctx) else "alone"
+		DotLog.info(CHANNEL, "map changed from the menu", {"map": String(id), "by": _who(ctx), "as": why})
 		if director.announce_fn.is_valid():
 			director.announce_fn.call("%s changed the map to %s." % [_who(ctx), label])
 		return _result(true, "Changing to %s." % label, "changed")
@@ -223,6 +341,31 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 		parts.append("Nominated %s." % label)
 	else:
 		parts.append("Could not nominate %s: %s" % [label, nominated.error.message])
+
+	# [b]A vote is the humans here agreeing, and one player is not that.[/b] The director's
+	# own rock-the-vote counts whatever its game counts (bots, in some) against whatever
+	# minimum its rules say (1 by default), so on its own a lone guest rocked the vote, won
+	# the ballot alone and changed the map. Here: at least min_voters() humans, and never a
+	# rock that would pass on fewer than a majority of them.
+	var here := humans()
+	if here < 0:
+		here = director.player_count()
+	var needed_voters := min_voters()
+	if here < needed_voters:
+		var text := "Changing maps needs a vote of the players here, and %s." % (
+			"you are the only one" if here <= 1 else "that takes %d players (%d here)" % [needed_voters, here])
+		parts.append(text)
+		DotLog.info(CHANNEL, "a map menu choice is a nomination only: too few humans to vote", {
+			"map": String(id), "by": _who(ctx), "humans": here, "needed": needed_voters})
+		return _result(nominated.ok, " ".join(parts), "voted" if nominated.ok else "refused")
+	if not director.clock.has_rocked(voter):
+		var after := director.clock.rtv_votes() + 1
+		var passes_at := director.clock.rtv_needed(director.player_count())
+		if passes_at > 0 and after >= passes_at and after * 2 <= here:
+			parts.append("Changing maps needs most of the %d players here to ask (%d so far): type !rtv once more of them want it." % [here, after - 1])
+			DotLog.warn(CHANNEL, "the vote's rules would pass a rock-the-vote without a majority of the humans; not rocked", {
+				"humans": here, "votes": after, "rules_need": passes_at, "director_count": director.player_count()})
+			return _result(nominated.ok, " ".join(parts), "voted" if nominated.ok else "refused")
 	var rocked := director.rock_the_vote(voter)
 	if rocked.ok:
 		parts.append("Rocked the vote: %d of %d." % [director.clock.rtv_votes(), director.clock.rtv_needed(director.player_count())])
@@ -320,6 +463,7 @@ func _send(ctx: Object, data: Dictionary) -> bool:
 
 
 func describe() -> Dictionary:
-	return {"flag": required_flag(), "cvar": cvar != null, "change_fn": change_fn.is_valid(),
+	return {"flag": required_flag(), "cvar": cvar != null, "alone": alone_allowed(), "vote_min": min_voters(),
+		"humans": humans(), "change_fn": change_fn.is_valid(),
 		"last_offer": (last_offer.get("maps", []) as Array).size() if last_offer.has("maps") else 0,
 		"last_result": last_result.get("how", "")}

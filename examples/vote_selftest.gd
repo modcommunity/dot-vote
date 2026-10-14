@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 520
+const CHECKS := 533
 
 var _passed := 0
 var _failed := 0
@@ -221,10 +221,22 @@ func _test_map_menu() -> void:
 	director.source = source
 	rules.enabled = true
 
+	# Fail closed: an empty value is staff, and letting everybody in is a word the owner writes.
 	console.call("execute", "sv_map_menu_flag \"\"", null)
 	console.call("execute", "mapmenu", player)
-	_check(commands.map_menu.required_flag() == "" and bool((sent.back() as Dictionary).get("allowed", false)),
-		"an empty flag lets anybody change it")
+	_check(commands.map_menu.required_flag() == "generic" and not bool((sent.back() as Dictionary).get("allowed", true)),
+		"an empty flag is staff only: it fails closed, never 'anybody'")
+	console.call("execute", "sv_map_menu_flag anyone", null)
+	console.call("execute", "mapmenu", player)
+	_check(commands.map_menu.required_flag() == "anyone" and bool((sent.back() as Dictionary).get("allowed", false)),
+		"'anyone' lets anybody change it")
+	console.call("execute", "sv_map_menu_flag generic", null)
+	var unbound := DotVoteMapMenu.new()
+	unbound.flag = ""
+	_check(unbound.required_flag() == "generic" and not unbound.is_staff(player),
+		"a menu with no cvar registered and no flag set is staff only too")
+
+	await _test_map_menu_humans(console, commands, director, rules, sent, now_ids, player, moderator)
 
 	# A server with hundreds of maps: one notice carries 8 KB, so the list goes out in parts
 	# a client puts back together, every part under the limit and no row lost.
@@ -243,6 +255,99 @@ func _test_map_menu() -> void:
 	console.queue_free()
 	director.queue_free()
 	_done()
+
+
+## Who is a human, and how many: the lone player, two of them, the owner's minimum, a majority,
+## and the host. The live bug of 2026-10-14 was a guest's M choice changing a public server's map.
+func _test_map_menu_humans(console: Node, commands: DotVoteCommands, director: DotVoteDirector,
+		rules: DotVoteRules, sent: Array, now_ids: Array, player: Object, moderator: Object) -> void:
+	var menu := commands.map_menu
+	var guest_session := DotClientSession.new(5, 7)
+	player.set("session", guest_session)
+	var here := [1]
+	menu.humans_fn = func() -> int: return here[0]
+	var last := func() -> Dictionary: return (sent.back() as Dictionary).get("result", {})
+
+	director.begin(&"atrium")
+	var before := now_ids.size()
+	_check(menu.alone_cvar != null and menu.alone_allowed() and menu.vote_min_cvar != null and menu.min_voters() == 2,
+		"sv_map_menu_alone (1) and sv_map_menu_vote_min (2) are registered with their defaults")
+	console.call("execute", "mapmenu", player)
+	_check(bool((sent.back() as Dictionary).get("allowed", false)) and bool((sent.back() as Dictionary).get("alone", false)),
+		"alone on the server, a guest is offered the change, and told it is because they are alone")
+	console.call("execute", "mapmenu docks", player)
+	await get_tree().process_frame
+	_check(now_ids.size() == before + 1 and str(last.call().get("how", "")) == "changed",
+		"alone with sv_map_menu_alone 1, a guest's choice changes the map (%s)" % str(last.call().get("text", "")))
+
+	console.call("execute", "sv_map_menu_alone 0", null)
+	director.begin(&"docks")
+	before = now_ids.size()
+	console.call("execute", "mapmenu foundry", player)
+	await get_tree().process_frame
+	var text := str(last.call().get("text", ""))
+	_check(now_ids.size() == before and not director.is_voting() and director.clock.rtv_votes() == 0
+		and text.contains("needs a vote of the players here") and text.contains("only one"),
+		"alone with sv_map_menu_alone 0: no change, no vote, and a clear line (%s)" % text)
+
+	console.call("execute", "sv_map_menu_alone 1", null)
+	here[0] = 2
+	director.begin(&"docks")
+	before = now_ids.size()
+	console.call("execute", "mapmenu", player)
+	_check(not bool((sent.back() as Dictionary).get("allowed", true)), "with a second human here the guest is offered a vote, not the change")
+	console.call("execute", "mapmenu foundry", player)
+	await get_tree().process_frame
+	text = str(last.call().get("text", ""))
+	_check(now_ids.size() == before and not director.is_voting() and director.clock.rtv_votes() == 1 and text.contains("Rocked the vote"),
+		"two humans, sv_map_menu_alone 1: the guest's choice is a nomination and one rock, no change (%s)" % text)
+
+	console.call("execute", "sv_map_menu_vote_min 3", null)
+	director.begin(&"docks")
+	console.call("execute", "mapmenu yard", player)
+	await get_tree().process_frame
+	text = str(last.call().get("text", ""))
+	_check(director.clock.rtv_votes() == 0 and text.contains("takes 3 players"),
+		"the owner's sv_map_menu_vote_min 3 holds two humans to a nomination (%s)" % text)
+	console.call("execute", "sv_map_menu_vote_min 1", null)
+	_check(menu.min_voters() == 2, "and sv_map_menu_vote_min never goes below 2")
+	console.call("execute", "sv_map_menu_vote_min 2", null)
+
+	# Rules that would pass one rock on a server of four (bots counted, a low fraction): the
+	# menu still wants most of the humans.
+	var fraction := rules.rtv_fraction
+	rules.rtv_fraction = 0.25
+	here[0] = 4
+	director.begin(&"docks")
+	console.call("execute", "mapmenu yard", player)
+	await get_tree().process_frame
+	text = str(last.call().get("text", ""))
+	_check(not director.is_voting() and director.clock.rtv_votes() == 0 and text.contains("most of the 4 players"),
+		"a rock the rules would pass on one of four humans is not made from the menu (%s)" % text)
+	rules.rtv_fraction = fraction
+
+	# The listen host's own player (no transport) owns the server.
+	here[0] = 3
+	console.call("execute", "sv_map_menu_alone 0", null)
+	director.begin(&"docks")
+	before = now_ids.size()
+	guest_session.local = true
+	console.call("execute", "mapmenu yard", player)
+	await get_tree().process_frame
+	_check(now_ids.size() == before + 1 and str(last.call().get("how", "")) == "changed",
+		"the host's own player (a local session) changes it, with others here and no flag")
+	guest_session.local = false
+
+	# Staff change it with others here.
+	director.begin(&"yard")
+	before = now_ids.size()
+	console.call("execute", "mapmenu docks", moderator)
+	await get_tree().process_frame
+	_check(now_ids.size() == before + 1, "and staff (generic) change it with others here")
+
+	console.call("execute", "sv_map_menu_alone 1", null)
+	menu.humans_fn = Callable()
+	player.set("session", null)
 
 
 ## A source with a reason for what it does not offer, as a game's would be.
