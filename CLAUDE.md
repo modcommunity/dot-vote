@@ -21,6 +21,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | `addons/dot_vote/core/` | `DotVoteChoice` (an id, a name, a ballot's facts), `DotVoteResult`, `DotVoteRules` (every policy, a `DotConfig`) |
 | `addons/dot_vote/runtime/` | `DotVoteDirector` (the engine), `DotVoteBallot`, `DotVoteClock`, `DotVoteNominations`, `DotVoteHistory`, `DotVoteSource` / `DotVoteListSource`, and the client views `DotVoteClockView`, `DotVoteBallotView`, `DotVoteBallotFeed` |
 | `addons/dot_vote/integrations/` | `DotVoteCommands`, `DotVoteMapMenu` (the M menu's server half, installed with the commands), `DotVoteMapSource` (dot-map), `DotVoteGameSource` (dot-server's `DotGameManager`) |
+| `addons/dot_vote/runtime/dot_vote_bans.gd`, `dot_vote_ban_rules.gd` | `DotVoteBans` (a yes/no vote to ban one player; `start`, `vote`, `ban_fn`) and its `sv_voteban*` cvars. [design](docs/design.md#votebans) |
 | `examples/vote_selftest.tscn` | the suite; `examples/fixtures/` its data |
 
 ## Running and testing

@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 534
+const CHECKS := 556
 
 var _passed := 0
 var _failed := 0
@@ -97,6 +97,7 @@ func _run() -> void:
 	)
 
 	print("")
+	_test_votebans()
 	print("%d passed, %d failed" % [_passed, _failed])
 
 	for line in _failures:
@@ -112,6 +113,128 @@ func _run() -> void:
 		get_tree().quit(1)
 		return
 	get_tree().quit(1 if _failed > 0 else 0)
+
+
+# --- Votebans --------------------------------------------------------------
+
+func _ban_rig(count: int) -> Array:
+	var bans := DotVoteBans.new()
+	var banned: Array = []
+	var told: Array = []
+	var ids: Array = []
+	for i in range(count):
+		ids.append(StringName("p%d" % i))
+	bans.voters_fn = func() -> Array: return ids
+	bans.role_fn = func(id: StringName) -> String: return "admin" if id == &"p0" else "player"
+	bans.ban_fn = func(target: StringName, minutes: float, reason: String) -> void: banned.append([target, minutes, reason])
+	bans.announce_fn = func(line: String) -> void: told.append(line)
+	return [bans, banned, told]
+
+
+func _test_votebans() -> void:
+	_section("A voteban: enabled, by role, passes on yes, fails on no or time, and the game may start one")
+
+	var rig := _ban_rig(6)
+	var bans: DotVoteBans = rig[0]
+	var banned: Array = rig[1]
+
+	var res := bans.start(&"p1", &"p2", "griefing")
+	_check(res.ok and bans.is_open(), "a player starts a voteban on another", str(res.error.message if not res.ok else ""))
+	_check(not bans.start(&"p3", &"p4").ok, "a second voteban is refused while one is open")
+	# 5 eligible, 0.6 -> 3 yes. The starter is the first.
+	_check(bans.yes_needed() == 3, "the pass threshold is a share of everybody but the target (%d)" % bans.yes_needed())
+	_check(not bans.vote(&"p2", true).ok, "the target cannot vote on their own ban")
+	bans.vote(&"p3", true)
+	_check(bans.is_open() and banned.is_empty(), "two yes of three needed leaves it open")
+	bans.vote(&"p4", true)
+	_check(not bans.is_open() and banned.size() == 1 and banned[0][0] == &"p2" and is_equal_approx(banned[0][1], 60.0),
+			"the third yes passes it and bans the target for the cvar's length")
+
+	# Same target again soon: cooldown.
+	_check(not bans.start(&"p3", &"p2").ok, "the same target is not voted on again inside the cooldown")
+	bans.advance(121.0)
+	_check(bans.start(&"p3", &"p2").ok, "after the cooldown it may be")
+	bans.cancel()
+
+	# Immune role.
+	rig = _ban_rig(6)
+	bans = rig[0]
+	_check(not bans.start(&"p1", &"p0").ok, "an immune role cannot be voted against")
+	_check(not bans.start(&"", &"p0").ok, "not even by the game")
+
+	# Per role: only staff may start.
+	bans.rules.start_roles = PackedStringArray(["admin"])
+	_check(not bans.start(&"p1", &"p2").ok, "a role that may not start one is refused")
+	_check(bans.start(&"p0", &"p2").ok, "a role that may, may")
+	bans.cancel()
+
+	# Off per server.
+	rig = _ban_rig(6)
+	bans = rig[0]
+	bans.rules.enabled = false
+	_check(not bans.start(&"p1", &"p2").ok and not bans.start(&"", &"p2").ok, "with the server's switch off nothing starts one, the game included")
+
+	# No wins, time loses.
+	rig = _ban_rig(6)
+	bans = rig[0]
+	banned = rig[1]
+	bans.start(&"p1", &"p2")
+	bans.vote(&"p3", false)
+	bans.vote(&"p4", false)
+	bans.vote(&"p5", false)
+	_check(not bans.is_open() and banned.is_empty(), "enough no votes to make the threshold impossible fails it at once")
+	bans = (_ban_rig(6))[0]
+	banned = []
+	bans.ban_fn = func(t: StringName, m: float, r: String) -> void: banned.append(t)
+	bans.start(&"p1", &"p2")
+	bans.advance(31.0)
+	_check(not bans.is_open() and banned.is_empty(), "silence is a no: the clock running out bans nobody")
+
+	# Too few voters.
+	rig = _ban_rig(3)
+	bans = rig[0]
+	_check(not bans.start(&"p1", &"p2").ok, "a server with too few other players refuses (min voters)")
+
+	# The game's own: no starter, no starter yes, its reason carried to the ban.
+	rig = _ban_rig(6)
+	bans = rig[0]
+	banned = rig[1]
+	res = bans.start(DotVoteBans.GAME, &"p2", "team damage")
+	_check(res.ok and bans.is_open(), "the game starts one with a reason")
+	bans.vote(&"p1", true)
+	bans.vote(&"p3", true)
+	bans.vote(&"p4", true)
+	_check(banned.size() == 1 and "team damage" in str(banned[0][2]), "its reason is on the ban")
+
+	# A voter leaving shrinks the electorate.
+	rig = _ban_rig(5)
+	bans = rig[0]
+	banned = rig[1]
+	bans.rules.min_voters = 2
+	bans.start(&"p1", &"p2")
+	bans.forget_voter(&"p4")
+	bans.forget_voter(&"p3")
+	bans.forget_voter(&"p0")
+	_check(bans.yes_needed() == 1 and not bans.is_open() and banned.size() == 1, "a leaver shrinks the electorate and the threshold with it")
+
+	# cvars on a real console.
+	if ResourceLoader.exists("res://addons/dot_server/console/dot_console.gd"):
+		var console: Object = load("res://addons/dot_server/console/dot_console.gd").new()
+		rig = _ban_rig(6)
+		bans = rig[0]
+		var bound := bans.bind_commands(console)
+		_check(bound.ok, "the commands and cvars register on a console", str(bound.error.message if not bound.ok else ""))
+		var cv: Variant = console.call("find_cvar", "sv_voteban_minutes")
+		_check(cv is Object, "sv_voteban_minutes is a cvar")
+		if cv is Object:
+			(cv as Object).call("set_value", "15")
+			bans.rules.refresh()
+			_check(is_equal_approx(bans.rules.ban_minutes, 15.0), "and the console's value is the ban's length")
+		console.free()
+	else:
+		_check(false, "dot-server is present so the voteban cvars can be run", "addons/dot_server is not linked")
+
+	_done()
 
 
 # --- The map menu ----------------------------------------------------------

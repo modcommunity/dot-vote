@@ -21,5 +21,7 @@ extends RefCounted
 #    sv_map_menu_vote_min (humans before a menu choice rocks the vote); DotVoteMapMenu
 #    humans_fn, humans(), is_staff(), is_alone(), alone_allowed(), min_voters(); the
 #    listen host's own (local) session may change; an offer carries `alone`.
-const LEVEL := 7
+# 8: votebans: DotVoteBans (start(starter, target, reason), vote, advance, the voteban,
+#    voteban_yes and voteban_no commands) and DotVoteBanRules (the sv_voteban* cvars).
+const LEVEL := 8
 const OLDEST := 1
