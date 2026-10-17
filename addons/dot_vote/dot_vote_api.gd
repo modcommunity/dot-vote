@@ -23,5 +23,6 @@ extends RefCounted
 #    listen host's own (local) session may change; an offer carries `alone`.
 # 8: votebans: DotVoteBans (start(starter, target, reason), vote, advance, the voteban,
 #    voteban_yes and voteban_no commands) and DotVoteBanRules (the sv_voteban* cvars).
-const LEVEL := 8
+# 9: DotVoteBallotFeed.describe() and DotVoteCommands.describe().
+const LEVEL := 9
 const OLDEST := 1

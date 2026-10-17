@@ -106,6 +106,17 @@ static func install(host: Object, p_director: DotVoteDirector) -> DotVoteCommand
 	return commands
 
 
+## Which commands are registered and under what prefix, for "why does !rtv do nothing".
+func describe() -> Dictionary:
+	return {
+		"prefix": prefix,
+		"director": director != null,
+		"map_menu": map_menu != null,
+		"admin_permission": admin_permission,
+		"registered": Array(registered),
+	}
+
+
 func command_name(role: String) -> String:
 	return prefix + str(names.get(role, DEFAULTS.get(role, role)))
 

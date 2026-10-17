@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 556
+const CHECKS := 561
 
 var _passed := 0
 var _failed := 0
@@ -86,6 +86,7 @@ func _run() -> void:
 	await _test_real_game_manager()
 	await _test_real_map_catalogue()
 	await _test_map_menu()
+	_test_describe()
 
 	DotPaths.remove_tree(DATA)
 
@@ -113,6 +114,24 @@ func _run() -> void:
 		get_tree().quit(1)
 		return
 	get_tree().quit(1 if _failed > 0 else 0)
+
+
+func _test_describe() -> void:
+	_section("The feed and the commands say what they are wired to")
+	var feed := DotVoteBallotFeed.new()
+	var d := feed.describe()
+	_check(not bool(d["can_send"]) and not bool(d["director"]), "an unwired feed says it cannot send")
+	_check(not bool(d["sent_anything"]), "and that it has sent nothing")
+	feed.send_fn = func(_state: Dictionary) -> void: pass
+	feed.title = "Pick"
+	d = feed.describe()
+	_check(bool(d["can_send"]) and d["title"] == "Pick", "a wired feed reports its sender and title")
+	var commands := DotVoteCommands.new()
+	commands.prefix = "!"
+	d = commands.describe()
+	_check(d["prefix"] == "!" and not bool(d["director"]), "the commands report their prefix and a missing director")
+	_check((d["registered"] as Array).is_empty(), "and that nothing is registered yet")
+	_done()
 
 
 # --- Votebans --------------------------------------------------------------

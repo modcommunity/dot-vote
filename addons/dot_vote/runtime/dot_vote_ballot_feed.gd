@@ -121,6 +121,20 @@ func reset() -> void:
 	_closed = {}
 
 
+## What an operator asks of a feed that seems to send nothing: whether it can send at all,
+## and what it last sent.
+func describe() -> Dictionary:
+	return {
+		"title": title,
+		"command": command,
+		"director": director != null,
+		"can_send": send_fn.is_valid(),
+		"sent_open": bool(_last.get("open", false)),
+		"sent_anything": not _last.is_empty(),
+		"closed_waiting": not _closed.is_empty(),
+	}
+
+
 func _decorate(state: Dictionary) -> Dictionary:
 	state["title"] = title
 	state["command"] = command
