@@ -76,6 +76,8 @@ DotVoteListSource.of(my_choices)            # anything else, with a Callable
 
 A list that grows while the server runs (maps or courses delivered after boot) is better given as a function than copied in: `source.entries_fn = func() -> Array: return my_catalogue()` is read again when a map begins and before every ballot, so nothing has to be refreshed by hand. It returns `DotVoteChoice`s, `[id, name]` pairs or bare ids.
 
+A `DotVoteListSource` can also offer the maps a player subscribed to: `source.follow_content(DotContentIndex.shared(), PackedStringArray(["*"]))` merges the index's `map` entries for its current session (solo only; an online index shows none), accepts the listed `map_kind`s (empty means none, `"*"` all), lets the game's own ids win, and labels each choice `Name [Pack]` through `DotVoteChoice.label()`. It needs only dot-core.
+
 The two integrations are duck-typed, so this addon installs in a project that has never heard of dot-server or dot-map. Per-choice settings live in the thing's own metadata, so a game's time limit is written beside the game:
 
 ```yaml

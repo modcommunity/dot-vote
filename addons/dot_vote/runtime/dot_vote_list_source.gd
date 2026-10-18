@@ -49,6 +49,12 @@ var loaded_from: String = ""
 ## always was.
 var entries_fn: Callable = Callable()
 
+## The index [method follow_content] reads, or null.
+var content_index: DotContentIndex = null
+
+## The [code]map_kind[/code]s [method follow_content] accepts; "*" is every kind, empty none.
+var content_kinds: PackedStringArray = PackedStringArray()
+
 
 static func of(choices: Array[DotVoteChoice]) -> DotVoteListSource:
 	# Not this class's own name. A script that names itself in an expression, loaded after
@@ -74,7 +80,60 @@ func source_name() -> String:
 
 
 func choices() -> Array[DotVoteChoice]:
-	return entries
+	if content_index == null:
+		return entries
+
+	var out: Array[DotVoteChoice] = entries.duplicate()
+	var seen := {}
+
+	for choice in entries:
+		seen[choice.id] = true
+
+	# Read from the index on every call, never copied: the index filters by its CURRENT
+	# session, so an online session shows no solo entry the moment it is set, with no
+	# signal to miss. The game's own ids are in [member entries] and always win.
+	for entry in content_index.entries(&"map"):
+		var choice := _choice_from_entry(entry)
+
+		if choice == null or seen.has(choice.id):
+			continue
+
+		seen[choice.id] = true
+		out.append(choice)
+
+	return out
+
+
+## Merges the maps subscribed packs provide into this list, for the index's current session
+## only. Opt-in: a source that never calls this offers exactly its own list. An empty
+## [param accepted_kinds] accepts none and "*" every [code]map_kind[/code], the same as
+## [code]DotMapCatalogue.follow_content[/code]. The index is dot-core's, so this adds no
+## dependency on dot-map.
+func follow_content(index: DotContentIndex, accepted_kinds: PackedStringArray = PackedStringArray()) -> void:
+	content_index = index
+	content_kinds = accepted_kinds
+
+
+## Stops merging; the delivered choices leave the list at once.
+func unfollow_content() -> void:
+	content_index = null
+	content_kinds = PackedStringArray()
+
+
+func _choice_from_entry(entry: DotContentEntry) -> DotVoteChoice:
+	var map_kind := str(entry.raw.get("map_kind", ""))
+
+	if entry.id == "" or map_kind == "" \
+			or not (content_kinds.has("*") or content_kinds.has(map_kind)):
+		return null
+
+	var choice := DotVoteChoice.of(StringName(entry.id), entry.name)
+	choice.pack_title = entry.pack_title
+	choice.group = StringName(map_kind)
+	choice.min_players = int(entry.raw.get("min_players", 0))
+	choice.max_players = int(entry.raw.get("max_players", 0))
+	choice.meta = {"entry_key": entry.key, "content_id": entry.content_id}
+	return choice
 
 
 func current_id() -> StringName:
@@ -85,7 +144,7 @@ func add(choice: DotVoteChoice) -> DotResult:
 	if choice == null or choice.id == &"":
 		return DotResult.fail(DotError.CODE_INVALID, "A choice needs an id.")
 
-	if has(choice.id):
+	if _owns(choice.id):
 		return DotResult.fail(
 			DotError.CODE_STATE, "'%s' is already in the list." % choice.id
 		)
@@ -93,6 +152,14 @@ func add(choice: DotVoteChoice) -> DotResult:
 	entries.append(choice)
 
 	return DotResult.success(choice)
+
+
+func _owns(id: StringName) -> bool:
+	for choice in entries:
+		if choice.id == id:
+			return true
+
+	return false
 
 
 func remove(id: StringName) -> bool:

@@ -686,7 +686,7 @@ func nominate(voter: StringName, id: StringName) -> DotResult:
 
 	if not choice.enabled:
 		return DotResult.fail(
-			DotError.CODE_FORBIDDEN, "%s is not available." % choice.name_or_id()
+			DotError.CODE_FORBIDDEN, "%s is not available." % choice.label()
 		)
 
 	var admin := _is_admin(voter)
@@ -711,13 +711,13 @@ func nominate(voter: StringName, id: StringName) -> DotResult:
 		return DotResult.fail(
 			DotError.CODE_STATE,
 			"%s is not available with %d players here."
-				% [choice.name_or_id(), player_count()]
+				% [choice.label(), player_count()]
 		)
 
 	if id == _current_id and not rules.nominate_current_allowed and not bypass:
 		return DotResult.fail(
 			DotError.CODE_STATE,
-			"%s is already running." % choice.name_or_id(),
+			"%s is already running." % choice.label(),
 			"vote to extend instead"
 		)
 
@@ -725,7 +725,7 @@ func nominate(voter: StringName, id: StringName) -> DotResult:
 		if history.on_cooldown(id, 0, -1.0, choice):
 			return DotResult.fail(
 				DotError.CODE_RATE_LIMITED,
-				"%s was played too recently." % choice.name_or_id()
+				"%s was played too recently." % choice.label()
 			)
 
 	var added := nominations.add(voter, id, admin)
@@ -734,7 +734,7 @@ func nominate(voter: StringName, id: StringName) -> DotResult:
 		return added
 
 	nominated.emit(voter, id)
-	_say("%s nominated %s." % [display_name(voter), choice.name_or_id()])
+	_say("%s nominated %s." % [display_name(voter), choice.label()])
 
 	return DotResult.success(choice)
 
@@ -1514,7 +1514,7 @@ func _do_change() -> DotResult:
 			"id": String(id), "why": applied.error.message
 		})
 		_say("Could not change to %s." % (
-			choice.name_or_id() if choice != null else String(id)
+			choice.label() if choice != null else String(id)
 		))
 
 		# Left running on the thing that still works, with a fresh clock, so the server
@@ -2182,7 +2182,7 @@ func ballot_name(choice: DotVoteChoice) -> String:
 	if choice == null:
 		return "-"
 
-	return rules.marked_name(choice.name_or_id(), choice.official)
+	return rules.marked_name(choice.label(), choice.official)
 
 
 ## The name a player sees for an id, pseudo-options included.
@@ -2205,7 +2205,7 @@ func option_label(id: StringName) -> String:
 
 func _name_of(id: StringName) -> String:
 	var choice := source.find(id) if source != null else null
-	return choice.name_or_id() if choice != null else String(id)
+	return choice.label() if choice != null else String(id)
 
 
 # --- Reporting -------------------------------------------------------------

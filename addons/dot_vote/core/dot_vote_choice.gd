@@ -31,6 +31,10 @@ extends Resource
 ## Name shown on the ballot. Falls back to [member id].
 @export var display_name: String = ""
 
+## The pack a subscription delivered this from, or empty for a choice the game names
+## itself. Shown beside the name ([method label]); never part of the id.
+@export var pack_title: String = ""
+
 ## Free-text line under the name, where a ballot has room for one.
 @export var description: String = ""
 
@@ -119,6 +123,15 @@ func name_or_id() -> String:
 	return display_name if display_name != "" else String(id)
 
 
+## What a menu, ballot or list prints: "Name [Pack]" for a delivered choice, the bare
+## name otherwise. Searching by name keeps using [method name_or_id].
+func label() -> String:
+	if pack_title == "":
+		return name_or_id()
+
+	return "%s [%s]" % [name_or_id(), pack_title]
+
+
 ## Whether this may appear on a ballot for a server with this many players.
 ##
 ## [param nominated] relaxes [member nominate_only] only — the player counts still
@@ -159,6 +172,7 @@ func to_dictionary() -> Dictionary:
 	return {
 		"id": String(id),
 		"display_name": display_name,
+		"pack_title": pack_title,
 		"description": description,
 		"group": String(group),
 		"enabled": enabled,
@@ -184,6 +198,7 @@ static func from_dictionary(data: Dictionary) -> DotVoteChoice:
 
 	choice.id = StringName(str(data.get("id", "")))
 	choice.display_name = str(data.get("display_name", data.get("name", "")))
+	choice.pack_title = str(data.get("pack_title", ""))
 	choice.description = str(data.get("description", ""))
 	choice.group = StringName(str(data.get("group", "")))
 	choice.enabled = bool(data.get("enabled", true))
@@ -205,7 +220,7 @@ static func from_dictionary(data: Dictionary) -> DotVoteChoice:
 func describe() -> Dictionary:
 	return {
 		"id": String(id),
-		"name": name_or_id(),
+		"name": label(),
 		"group": String(group) if group != &"" else "-",
 		"limit": "default" if time_limit_sec < 0.0 else "%ds" % int(time_limit_sec),
 		"enabled": enabled,

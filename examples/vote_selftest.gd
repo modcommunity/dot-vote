@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 561
+const CHECKS := 575
 
 var _passed := 0
 var _failed := 0
@@ -72,6 +72,7 @@ func _run() -> void:
 	_test_rtv_parity()
 	_test_manual_rtv()
 	_test_list_fn()
+	_test_subscribed_maps()
 	_test_end_vote_switch()
 	_test_no_votes()
 	_test_hibernation()
@@ -114,6 +115,59 @@ func _run() -> void:
 		get_tree().quit(1)
 		return
 	get_tree().quit(1 if _failed > 0 else 0)
+
+
+func _test_subscribed_maps() -> void:
+	_section("Subscribed maps join a list source for the current session only")
+	var index := DotContentIndex.new()
+	var pack := index.add_pack({
+		"content_id": "someone/surf-pack", "version": "1.0.0", "prefix": "res://x/",
+		"session": "solo", "source": "subscription",
+		"provides": {"title": "Surf Pack", "entries": [
+			{"kind": "map", "id": "surf_new", "name": "Surf New", "scene": "a.tscn", "map_kind": "surf"},
+			{"kind": "map", "id": "bhop_new", "name": "Bhop New", "scene": "b.tscn", "map_kind": "bhop"},
+			{"kind": "map", "id": "own_map", "name": "Pack Own", "scene": "c.tscn", "map_kind": "surf"},
+			{"kind": "weapon", "id": "gun", "name": "Gun", "def": "g.tres"},
+		]},
+	})
+	_check(pack.ok, "the fixture pack is indexed")
+
+	var source := DotVoteListSource.new()
+	source.add(DotVoteChoice.of(&"own_map", "Own Map"))
+	_check(source.ids() == [&"own_map"], "a list that never opted in offers only its own")
+
+	source.follow_content(index, PackedStringArray(["*"]))
+	_check(source.has(&"surf_new") and source.has(&"bhop_new"), "solo: subscribed maps are offered")
+	_check(not source.has(&"gun"), "a kind that is not a map is never offered")
+	_check(source.find(&"surf_new").label() == "Surf New [Surf Pack]", "a delivered map is labelled with its pack")
+	_check(source.find(&"own_map").label() == "Own Map" and source.find(&"own_map").pack_title == "",
+		"and the existing id wins, bare")
+	_check(source.ids().count(&"own_map") == 1, "a clashing id is offered once")
+
+	var director := _make_director(DotVoteRules.new(), source)
+	_check(director.ballot_name(source.find(&"surf_new")) == "Surf New [Surf Pack]",
+		"a ballot prints the pack name")
+	director.queue_free()
+
+	source.follow_content(index, PackedStringArray(["surf"]))
+	_check(source.has(&"surf_new") and not source.has(&"bhop_new"), "accepted kinds filter")
+	source.follow_content(index, PackedStringArray())
+	_check(source.ids() == [&"own_map"], "no accepted kinds means none")
+
+	source.follow_content(index, PackedStringArray(["*"]))
+	index.set_session(DotContentIndex.SESSION_ONLINE)
+	_check(source.ids() == [&"own_map"], "online: no solo entry is ever offered")
+	index.set_session(DotContentIndex.SESSION_SOLO)
+	_check(source.has(&"surf_new"), "back in solo they return")
+
+	index.tag_pack(&"someone/surf-pack", "1.0.0", DotContentIndex.SESSION_ONLINE)
+	index.set_session(DotContentIndex.SESSION_ONLINE)
+	_check(source.has(&"surf_new"), "a pack a server also requires is offered online")
+	index.set_session(DotContentIndex.SESSION_SOLO)
+
+	source.unfollow_content()
+	_check(source.ids() == [&"own_map"], "unfollowing removes them at once")
+	_done()
 
 
 func _test_describe() -> void:

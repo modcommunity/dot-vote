@@ -620,7 +620,7 @@ func _settle(result: DotVoteResult, winner_id: StringName, counts: Dictionary) -
 	result.winner_id = winner_id
 	result.winner = find_option(winner_id)
 
-	var name := result.winner.name_or_id() if result.winner != null else String(winner_id)
+	var name := result.winner.label() if result.winner != null else String(winner_id)
 	var votes := float(counts.get(winner_id, 0.0))
 
 	result.summary = "%s wins with %s." % [name, _format_votes(votes)]

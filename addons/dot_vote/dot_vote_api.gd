@@ -24,5 +24,7 @@ extends RefCounted
 # 8: votebans: DotVoteBans (start(starter, target, reason), vote, advance, the voteban,
 #    voteban_yes and voteban_no commands) and DotVoteBanRules (the sv_voteban* cvars).
 # 9: DotVoteBallotFeed.describe() and DotVoteCommands.describe().
-const LEVEL := 9
+# 10: DotVoteListSource.follow_content(index, accepted_kinds) and DotVoteChoice.pack_title and
+#     label() ("Name [Pack]"), which every ballot, menu and message prints.
+const LEVEL := 10
 const OLDEST := 1
