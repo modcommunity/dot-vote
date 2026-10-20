@@ -55,6 +55,17 @@ var content_index: DotContentIndex = null
 ## The [code]map_kind[/code]s [method follow_content] accepts; "*" is every kind, empty none.
 var content_kinds: PackedStringArray = PackedStringArray()
 
+## [code]func(id: StringName) -> bool[/code]: whether the server's map rotation (maps.yml) plays
+## [param id]. Applied to [b]every[/b] choice this source offers, the merged
+## [method follow_content] maps included, so the ballot, nominations and the next-map draw
+## (all of which read [method choices]) agree. A pack map is installed and loadable by the map
+## command; it is just not on the rotation unless the file lists it. Unset, every choice rotates.
+var in_rotation_fn: Callable = Callable()
+
+## [code]func() -> Array[/code]: ids in the rotation's written order. Choices named there come
+## first, in that order; the rest follow in their own order. Unset, the list's own order.
+var rotation_order_fn: Callable = Callable()
+
 
 static func of(choices: Array[DotVoteChoice]) -> DotVoteListSource:
 	# Not this class's own name. A script that names itself in an expression, loaded after
@@ -80,6 +91,10 @@ func source_name() -> String:
 
 
 func choices() -> Array[DotVoteChoice]:
+	return _through_rotation(_merged())
+
+
+func _merged() -> Array[DotVoteChoice]:
 	if content_index == null:
 		return entries
 
@@ -100,6 +115,39 @@ func choices() -> Array[DotVoteChoice]:
 
 		seen[choice.id] = true
 		out.append(choice)
+
+	return out
+
+
+## The one filter and order every map source goes through, merged pack maps included.
+func _through_rotation(all: Array[DotVoteChoice]) -> Array[DotVoteChoice]:
+	if not in_rotation_fn.is_valid() and not rotation_order_fn.is_valid():
+		return all
+
+	var kept: Array[DotVoteChoice] = []
+
+	for choice in all:
+		if not in_rotation_fn.is_valid() or bool(in_rotation_fn.call(choice.id)):
+			kept.append(choice)
+
+	if not rotation_order_fn.is_valid():
+		return kept
+
+	var written: Variant = rotation_order_fn.call()
+
+	if not (written is Array):
+		return kept
+
+	var out: Array[DotVoteChoice] = []
+
+	for id: Variant in (written as Array):
+		for choice in kept:
+			if choice.id == StringName(str(id)) and not out.has(choice):
+				out.append(choice)
+
+	for choice in kept:
+		if not out.has(choice):
+			out.append(choice)
 
 	return out
 

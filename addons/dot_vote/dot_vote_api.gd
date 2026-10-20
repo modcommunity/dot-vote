@@ -29,5 +29,7 @@ extends RefCounted
 # 11: DotVoteCommands names that take lists (aliases), spec_fn, chat_prefix, skipped, typed;
 #     DotVoteGameSource.order; DotVoteMapSource skips maps outside the rotation. Needs dot-core
 #     API level 12 (DotCommandNames).
-const LEVEL := 11
+# 12: DotVoteListSource.in_rotation_fn and rotation_order_fn: the rotation filter and order
+#     apply to every choice, the maps merged by follow_content included.
+const LEVEL := 12
 const OLDEST := 1

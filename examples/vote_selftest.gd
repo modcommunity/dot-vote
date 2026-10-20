@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 584
+const CHECKS := 589
 
 var _passed := 0
 var _failed := 0
@@ -164,6 +164,25 @@ func _test_subscribed_maps() -> void:
 	index.set_session(DotContentIndex.SESSION_ONLINE)
 	_check(source.has(&"surf_new"), "a pack a server also requires is offered online")
 	index.set_session(DotContentIndex.SESSION_SOLO)
+
+	# The rotation filter and order cover the merged maps as they do the game's own.
+	var listed := {&"own_map": true, &"bhop_new": true}
+	source.in_rotation_fn = func(id: StringName) -> bool: return listed.has(id)
+	source.rotation_order_fn = func() -> Array: return [&"bhop_new", &"own_map"]
+	_check(source.ids() == [&"bhop_new", &"own_map"], "an unlisted pack map is off the list; the written order wins", str(source.ids()))
+	var rot_director := _make_director(DotVoteRules.new(), source)
+	rot_director.begin(&"own_map")
+	_check(not rot_director.nominate(&"u1", &"surf_new").ok, "nominate refuses a pack map outside the rotation")
+	_check(rot_director.nominate(&"u1", &"bhop_new").ok, "and takes one inside it")
+	var drawn_ok := true
+	for _i in 4:
+		drawn_ok = drawn_ok and rot_director.next_in_rotation() != &"surf_new"
+		rot_director.begin(rot_director.next_in_rotation())
+	_check(drawn_ok, "the next-map draw never lands on it")
+	rot_director.queue_free()
+	source.in_rotation_fn = Callable()
+	source.rotation_order_fn = Callable()
+	_check(source.has(&"surf_new"), "with no rotation the pack map is offered again")
 
 	source.unfollow_content()
 	_check(source.ids() == [&"own_map"], "unfollowing removes them at once")
