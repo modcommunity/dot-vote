@@ -102,3 +102,7 @@ Every game has a map menu on M (dot-menu's `DotMenuMaps`), and on a server its o
 
 A game starts one with `start(DotVoteBans.GAME, target, reason)`; the reason reaches the ban. The game as starter skips the start role and the starter's cooldown and nothing else: an automatic trigger must not be a way to ban an immune role, nor to rerun a vote every second. It passes the moment enough say yes and fails the moment that many yes can no longer happen or the clock runs out, so silence is a no. Commands: `voteban <player> [reason]`, `voteban_yes`, `voteban_no` (`DotVoteBans.names` and `prefix` rename them). The suite's "A voteban" section covers each of these.
 
+
+## Renaming the commands
+
+`DotVoteCommands.prefix` and `names` rename every command; a role's value may be a list, the first name being the one help and hints show (`command_name`, `typed`) and the rest aliases. `spec_fn` (`() -> Dictionary` with `prefix` and `names`) lets an operator's file do it: dot-map's `maps.yml` and the server's `games.yml` have a `commands:` block, normalised by dot-core's `DotRotationSpec`, and a game points `spec_fn` at its rotation file instead of naming anything. The file wins over the game's own settings. A name another command already holds is skipped with a WARN (`DotCommandNames.available`), never taken. `chat_prefix` is the first of the server's `chat_command_prefixes`, for text shown to players only.

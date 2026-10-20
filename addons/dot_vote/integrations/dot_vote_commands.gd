@@ -67,8 +67,21 @@ var with_map_menu: bool = true
 ## Prepended to every command name. [code]"sv_"[/code] gives [code]sv_rtv[/code].
 var prefix: String = ""
 
-## Per-role name overrides, e.g. [code]{"rtv": "rockthevote"}[/code].
+## Per-role name overrides, e.g. [code]{"rtv": "rockthevote"}[/code]. A value may be a list:
+## the first name is the one help shows, the rest are aliases (`{"rtv": ["rtv", "rock"]}`).
 var names: Dictionary = {}
+
+## Where an operator's `commands:` block comes from: [code]() -> Dictionary[/code] with `prefix`
+## and `names`, e.g. dot-map's `DotMapRotationFile.commands`. Read once by [method bind], after
+## the game's own settings, so the file wins. Duck-typed so this addon names no other.
+var spec_fn: Callable = Callable()
+
+## What a player types before a command in chat (the server's first `chat_command_prefixes`).
+## Only for text shown to players: help, hints and the ballot's line.
+var chat_prefix: String = "!"
+
+## Names refused because something else had them, for [method describe].
+var skipped: PackedStringArray = PackedStringArray()
 
 ## Permission an admin command needs. Empty makes them console-only.
 ##
@@ -114,11 +127,33 @@ func describe() -> Dictionary:
 		"map_menu": map_menu != null,
 		"admin_permission": admin_permission,
 		"registered": Array(registered),
+		"skipped": Array(skipped),
+		"aliases": _aliases_by_role(),
 	}
 
 
+## The name help and hints show for a role: the primary, prefix included.
 func command_name(role: String) -> String:
-	return prefix + str(names.get(role, DEFAULTS.get(role, role)))
+	return DotCommandNames.all_of(prefix, names, DEFAULTS, role)[0]
+
+
+## Every name a role answers to, the primary first.
+func command_names(role: String) -> PackedStringArray:
+	return DotCommandNames.all_of(prefix, names, DEFAULTS, role)
+
+
+## What a player types in chat for a role, e.g. [code]!game_rtv[/code].
+func typed(role: String) -> String:
+	return DotCommandNames.typed(chat_prefix, command_name(role))
+
+
+func _aliases_by_role() -> Dictionary:
+	var out := {}
+	for role: Variant in names:
+		var all := command_names(str(role))
+		if all.size() > 1:
+			out[str(role)] = Array(all.slice(1))
+	return out
 
 
 ## Registers everything on [param host].
@@ -127,6 +162,11 @@ func bind(host: Object) -> DotResult:
 		return DotResult.fail(
 			DotError.CODE_INVALID, "A host and a director are both needed."
 		)
+
+	if spec_fn.is_valid():
+		var from_file: Variant = spec_fn.call()
+		if from_file is Dictionary:
+			DotCommandNames.apply(self, from_file)
 
 	var adder := ""
 
@@ -164,17 +204,21 @@ func bind(host: Object) -> DotResult:
 	for role: Variant in table:
 		var entry: Array = table[role]
 		var permission := admin_permission if ADMIN.has(role) else ""
-		var full := command_name(str(role))
 
-		var registered_command: Variant = host.call(
-			adder, full, entry[0], entry[1], permission
-		)
+		for full in command_names(str(role)):
+			if not DotCommandNames.available(host, full, registered, str(role), "vote"):
+				skipped.append(full)
+				continue
 
-		if registered_command is Object and CHAT.has(role):
-			if (registered_command as Object).has_method("with_chat"):
-				(registered_command as Object).call("with_chat")
+			var registered_command: Variant = host.call(
+				adder, full, entry[0], entry[1], permission
+			)
 
-		registered.append(full)
+			if registered_command is Object and CHAT.has(role):
+				if (registered_command as Object).has_method("with_chat"):
+					(registered_command as Object).call("with_chat")
+
+			registered.append(full)
 
 	if with_map_menu:
 		if map_menu == null:

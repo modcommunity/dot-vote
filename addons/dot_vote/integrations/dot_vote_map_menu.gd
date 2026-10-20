@@ -377,7 +377,7 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 		var after := director.clock.rtv_votes() + 1
 		var passes_at := director.clock.rtv_needed(director.player_count())
 		if passes_at > 0 and after >= passes_at and after * 2 <= here:
-			parts.append("Changing maps needs most of the %d players here to ask (%d so far): type !rtv once more of them want it." % [here, after - 1])
+			parts.append("Changing maps needs most of the %d players here to ask (%d so far): type %s once more of them want it." % [here, after - 1, commands.typed("rtv") if commands != null else "!rtv"])
 			DotLog.warn(CHANNEL, "the vote's rules would pass a rock-the-vote without a majority of the humans; not rocked", {
 				"humans": here, "votes": after, "rules_need": passes_at, "director_count": director.player_count()})
 			return _result(nominated.ok, " ".join(parts), "voted" if nominated.ok else "refused")

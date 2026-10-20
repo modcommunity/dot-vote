@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 575
+const CHECKS := 582
 
 var _passed := 0
 var _failed := 0
@@ -4883,6 +4883,36 @@ func _test_real_game_manager() -> void:
 		"dot-server already ships a `vote`, and a timer server's players type !rtv"
 	)
 
+	# Aliases, a file-supplied block, and a collision that is a skip and never a steal.
+	var aliased := DotVoteCommands.new()
+	aliased.director = director
+	aliased.prefix = "al_"
+	aliased.names = {"rtv": ["rockthevote", "rock"]}
+	aliased.spec_fn = func() -> Dictionary:
+		return {"names": {"timeleft": PackedStringArray(["left", "tl"])}}
+	aliased.chat_prefix = "/"
+	var aliased_bound := aliased.bind(console)
+	_check(aliased_bound.ok and console.call("find_command", "al_rockthevote") != null
+			and console.call("find_command", "al_rock") != null,
+		"a role answers to its name and its aliases")
+	_check(console.call("find_command", "al_left") != null and console.call("find_command", "al_tl") != null
+			and console.call("find_command", "al_timeleft") == null,
+		"a `commands:` block from spec_fn replaces the role's name")
+	_check(aliased.command_name("rtv") == "al_rockthevote" and aliased.typed("rtv") == "/al_rockthevote",
+		"help shows the first name behind the first chat prefix (%s)" % aliased.typed("rtv"))
+	_check(Array(aliased.describe()["aliases"]["rtv"]) == ["al_rock"], "describe lists the aliases")
+
+	var clashing := DotVoteCommands.new()
+	clashing.director = director
+	clashing.prefix = "al_"
+	clashing.names = {"rtv": "rock", "nominate": ["nom", "sv_rtv"]}
+	var rock_before: Object = console.call("find_command", "al_rock")
+	clashing.bind(console)
+	_check(console.call("find_command", "al_rock") == rock_before and clashing.skipped.has("al_rock"),
+		"a name another command holds is skipped and the holder keeps it (%s)" % [clashing.skipped])
+	_check(console.call("find_command", "al_nom") != null and not clashing.registered.has("al_rock"),
+		"while its alias beside the clash still registers")
+
 	# The reply to a vote names what the player saw on the ballot. It printed the id,
 	# so a click on "Don't change" came back in chat as "Voted for __keep__.".
 	var keep_rules := _rules()
@@ -5018,6 +5048,16 @@ func _test_real_map_catalogue() -> void:
 		one != null and one.group == &"surf",
 		"and its kind becomes its group, so a ballot can be filtered"
 	)
+
+	# maps.yml: a map outside the active rotation is installed but never on a ballot or a
+	# nomination (the source reads DotMapDef.in_rotation, duck-typed).
+	var off_map: Variant = catalogue.call("get_map", &"map_two")
+	off_map.set("in_rotation", false)
+	_check(
+		source.choices().size() == 1 and source.find(&"map_two") == null and source.find(&"map_one") != null,
+		"a map outside the map rotation is left out of the ballot and nominations"
+	)
+	off_map.set("in_rotation", true)
 
 	var surf_only := DotVoteMapSource.of(catalogue, session)
 	surf_only.kinds = [&"surf"] as Array[StringName]

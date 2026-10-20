@@ -43,6 +43,12 @@ var manager: Object = null
 ## offer "vote to go back to the menu", which is not a game anybody votes for.
 var excluded: Array[StringName] = []
 
+## Game ids in the order [method choices] lists them, the others after, in manager order.
+##
+## What a fixed cycle (a `mode: cycle` rotation) is: the director's "next in rotation" walks
+## the source's order, so ordering the source is all it takes, and nothing here knows why.
+var order: Array[StringName] = []
+
 
 static func of(p_manager: Object) -> DotVoteGameSource:
 	# Not this class's own name. A script that names itself in an expression, loaded after
@@ -129,6 +135,19 @@ func choices() -> Array[DotVoteChoice]:
 
 		if choice != null:
 			out.append(choice)
+
+	if not order.is_empty():
+		var rank := func(c: DotVoteChoice) -> int:
+			var at := order.find(c.id)
+			return at if at >= 0 else order.size()
+		# Stable by construction: ties compare equal and keep manager order.
+		var keyed: Array = []
+		for i in range(out.size()):
+			keyed.append([rank.call(out[i]), i, out[i]])
+		keyed.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+		out.clear()
+		for k: Array in keyed:
+			out.append(k[2])
 
 	return out
 

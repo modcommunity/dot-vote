@@ -109,6 +109,13 @@ func _to_choice(map: Object) -> DotVoteChoice:
 	if id == &"" or excluded.has(id):
 		return null
 
+	# Outside the server's active map rotation (maps.yml): installed and loadable by `map`,
+	# never on a ballot or a nomination. Duck-typed like everything here; a catalogue whose
+	# maps have no such property (null) offers every map as it always did.
+	var listed: Variant = map.get("in_rotation")
+	if listed != null and not bool(listed):
+		return null
+
 	var kind := StringName(str(map.get("kind")))
 
 	if not kinds.is_empty() and not kinds.has(kind):
