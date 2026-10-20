@@ -134,11 +134,15 @@ var last_result: Dictionary = {}
 ## Registers `mapmenu` (typable in chat, gated inside rather than by the console, because a
 ## player without the flag still gets the list and the vote) and the flag's cvar.
 func bind(host: Object, adder: String) -> void:
-	var full := commands.command_name("mapmenu")
-	var registered_command: Variant = host.call(adder, full, _cmd, "The map menu: list the maps, or change to one", "")
-	if registered_command is Object and (registered_command as Object).has_method("with_chat"):
-		(registered_command as Object).call("with_chat")
-	commands.registered.append(full)
+	# Renames, aliases and the collision check are the rest of the commands' (maps.yml `commands:`).
+	for full in commands.command_names("mapmenu"):
+		if not DotCommandNames.available(host, full, commands.registered, "mapmenu", "vote"):
+			commands.skipped.append(full)
+			continue
+		var registered_command: Variant = host.call(adder, full, _cmd, "The map menu: list the maps, or change to one", "")
+		if registered_command is Object and (registered_command as Object).has_method("with_chat"):
+			(registered_command as Object).call("with_chat")
+		commands.registered.append(full)
 
 	cvar = _bind_cvar(host, FLAG_CVAR, DEFAULT_FLAG,
 		"The admin flag that may change the map from the M menu; anybody else gets a vote. 'anyone': everybody. Empty: staff (generic).")

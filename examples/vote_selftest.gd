@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 582
+const CHECKS := 584
 
 var _passed := 0
 var _failed := 0
@@ -4912,6 +4912,24 @@ func _test_real_game_manager() -> void:
 		"a name another command holds is skipped and the holder keeps it (%s)" % [clashing.skipped])
 	_check(console.call("find_command", "al_nom") != null and not clashing.registered.has("al_rock"),
 		"while its alias beside the clash still registers")
+
+	# The map menu takes a rename, aliases and the collision check like the rest.
+	var menu_named := DotVoteCommands.new()
+	menu_named.director = director
+	menu_named.prefix = "mm_"
+	menu_named.names = {"mapmenu": ["menu", "mm"]}
+	menu_named.bind(console)
+	_check(console.call("find_command", "mm_menu") != null and console.call("find_command", "mm_mm") != null
+			and console.call("find_command", "mm_mapmenu") == null,
+		"mapmenu answers to its configured name and alias")
+	var menu_clash := DotVoteCommands.new()
+	menu_clash.director = director
+	menu_clash.prefix = "mm_"
+	menu_clash.names = {"mapmenu": ["menu"]}
+	var menu_before: Object = console.call("find_command", "mm_menu")
+	menu_clash.bind(console)
+	_check(console.call("find_command", "mm_menu") == menu_before and menu_clash.skipped.has("mm_menu"),
+		"and a mapmenu name another command holds is skipped, not stolen")
 
 	# The reply to a vote names what the player saw on the ballot. It printed the id,
 	# so a click on "Don't change" came back in chat as "Voted for __keep__.".

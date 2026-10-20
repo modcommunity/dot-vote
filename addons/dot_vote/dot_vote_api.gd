@@ -26,5 +26,8 @@ extends RefCounted
 # 9: DotVoteBallotFeed.describe() and DotVoteCommands.describe().
 # 10: DotVoteListSource.follow_content(index, accepted_kinds) and DotVoteChoice.pack_title and
 #     label() ("Name [Pack]"), which every ballot, menu and message prints.
-const LEVEL := 10
+# 11: DotVoteCommands names that take lists (aliases), spec_fn, chat_prefix, skipped, typed;
+#     DotVoteGameSource.order; DotVoteMapSource skips maps outside the rotation. Needs dot-core
+#     API level 12 (DotCommandNames).
+const LEVEL := 11
 const OLDEST := 1
