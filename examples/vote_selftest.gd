@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 598
+const CHECKS := 604
 
 var _passed := 0
 var _failed := 0
@@ -70,6 +70,7 @@ func _run() -> void:
 	_test_lead_fraction()
 	_test_ballot_options()
 	_test_nothing_to_vote_for()
+	_test_single_voter_auto()
 	_test_rtv_parity()
 	_test_manual_rtv()
 	_test_list_fn()
@@ -3129,6 +3130,49 @@ func _test_list_fn() -> void:
 	_done()
 
 
+func _test_single_voter_auto() -> void:
+	_section("An automatic ballot needs two voters; a manual one does not")
+
+	var rules := _rules()
+	rules.duration_sec = 600.0
+	rules.vote_warning_sec = 0.0
+	rules.vote_cooldown_sec = 0.0
+	var director := _make_director(rules, DotVoteListSource.of(_choices(["a", "b", "c"])))
+	director.begin(&"a")
+
+	director.player_count_fn = func() -> int: return 1
+	director.start_vote(DotVoteClock.REASON_TIME)
+	_check(not director.is_voting(), "one human: the timed ballot is passed over")
+
+	# A loading or ghost peer is a player but not a voter.
+	director.player_count_fn = func() -> int: return 3
+	director.voters_fn = func() -> Array: return [&"p1"]
+	director.start_vote(DotVoteClock.REASON_TIME)
+	_check(not director.is_voting(), "three sessions, one voter: passed over")
+
+	director.player_count_fn = func() -> int: return 2
+	director.start_vote(DotVoteClock.REASON_RTV)
+	_check(not director.is_voting(), "a human and a bot: a passed rock-the-vote is passed over")
+
+	director.voters_fn = func() -> Array: return [&"p1", &"p2"]
+	director.start_vote(DotVoteClock.REASON_TIME)
+	_check(director.is_voting(), "two voters: it opens")
+	director.close_vote()
+
+	director.voters_fn = func() -> Array: return [&"p1"]
+	rules.allow_single_voter_auto = true
+	var again := director.start_vote(DotVoteClock.REASON_TIME)
+	_check(director.is_voting(), "allow_single_voter_auto: a lone voter gets the ballot", str(again.error))
+	director.close_vote()
+
+	rules.allow_single_voter_auto = false
+	director.start_vote(DotVoteClock.REASON_MANUAL)
+	_check(director.is_voting(), "a manual vote by a lone voter still opens")
+	director.queue_free()
+
+	_done()
+
+
 func _test_nothing_to_vote_for() -> void:
 	_section("A vote with nothing else to choose is not held")
 
@@ -3710,6 +3754,7 @@ func _test_empty_server() -> void:
 	var rules := _rules()
 	rules.duration_sec = 100.0
 	rules.vote_lead_sec = 20.0
+	rules.allow_single_voter_auto = true
 	var players := [0]
 	var director := _make_director(rules, source)
 	director.player_count_fn = func() -> int: return players[0]

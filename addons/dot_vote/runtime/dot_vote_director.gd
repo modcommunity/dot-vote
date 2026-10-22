@@ -658,6 +658,15 @@ func forget_voter(voter: StringName) -> void:
 		ballot.eligible = maxi(_eligible_count(), 1)
 
 
+## Whether an automatic ballot (any reason but manual) would have one voter to decide it.
+## Nobody at all is not "one": [member DotVoteRules.min_players_to_vote] 0 asked for that.
+func _lone_auto(reason: StringName) -> bool:
+	return (
+		reason != DotVoteClock.REASON_MANUAL and not rules.allow_single_voter_auto
+		and player_count() > 0 and _eligible_count() < 2
+	)
+
+
 func _eligible_count() -> int:
 	if voters_fn.is_valid():
 		return (voters_fn.call() as Array).size()
@@ -889,6 +898,11 @@ func start_vote(
 		_pass_over(reason)
 		return DotResult.success(0.0)
 
+	if _lone_auto(reason):
+		DotLog.info(CHANNEL, "auto ballot skipped: one voter", {"reason": String(reason)})
+		_pass_over(reason)
+		return DotResult.success(0.0)
+
 	if rules.vote_warning_sec > 0.0:
 		_begin_countdown(rules.vote_warning_sec, false, reason)
 		return DotResult.success(rules.vote_warning_sec)
@@ -1065,6 +1079,11 @@ func _advance_countdown(delta: float) -> void:
 	# The last alternative can go during the countdown: a player leaves and the only other
 	# game needs more of them.
 	if not has_alternatives():
+		_pass_over(_countdown_reason)
+		return
+
+	if _lone_auto(_countdown_reason):
+		DotLog.info(CHANNEL, "auto ballot skipped: one voter", {"reason": String(_countdown_reason)})
 		_pass_over(_countdown_reason)
 		return
 

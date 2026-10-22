@@ -583,6 +583,13 @@ enum RtvAfterDecided {
 ## vote system being broken.
 @export_range(0, 64, 1) var min_players_to_vote: int = 1
 
+## Whether an automatic ballot (time, rounds, score, rock-the-vote) may open with one voter.
+##
+## Off: a lone player is not a vote and would "win" the map with one ballot, so the due vote
+## is passed over like a ballot with nothing to vote for. A manual vote and the map menu's
+## direct change are unaffected. The voters are [member DotVoteDirector.voters_fn] when set.
+@export var allow_single_voter_auto: bool = false
+
 ## Whether players who are not in the game may vote.
 ##
 ## Off: a spectator on a timer server is often somebody waiting for a friend, and on
@@ -1006,6 +1013,14 @@ func drop_unfed(feeds_rounds: bool, feeds_score: bool) -> PackedStringArray:
 
 
 func validate() -> DotResult:
+	var bad := _validate_sizes()
+	if bad == null:
+		bad = _validate_triggers()
+	return bad if bad != null else DotResult.success(true)
+
+
+## The first size or ballot-shape problem as a failure, or null.
+func _validate_sizes() -> DotResult:
 	if max_options < 2:
 		return DotResult.fail(
 			DotError.CODE_INVALID, "A ballot needs at least two options."
@@ -1026,6 +1041,11 @@ func validate() -> DotResult:
 				% [runoff_options, max_options]
 		)
 
+	return null
+
+
+## The first trigger or lead problem as a failure, or null.
+func _validate_triggers() -> DotResult:
 	# 0 with a rock-the-vote is "around the clock until the players ask": a real server,
 	# and what a choice's own time_limit_sec: 0 already meant. Only with nothing at all
 	# that could end it is it a configuration that cannot work.
@@ -1098,7 +1118,7 @@ func validate() -> DotResult:
 			"the ballot would open the instant the choice started"
 		)
 
-	return DotResult.success(true)
+	return null
 
 
 ## A short human summary. [b]Not [code]describe_lines[/code][/b], which [DotConfig]

@@ -325,24 +325,7 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 	var label := director.option_label(id)
 
 	if may_change(ctx):
-		if director.is_voting():
-			return _result(false, "A vote is open; it decides. %s closes it first." % commands.command_name("endvote"), "refused")
-		var changed: DotResult = null
-		if change_fn.is_valid():
-			changed = await change_fn.call(id)
-		elif director.source.supports_apply():
-			changed = await director.source.apply(id)
-			if changed.ok and director.begin_on_apply:
-				director.begin(id)
-		else:
-			changed = DotResult.fail(DotError.CODE_UNSUPPORTED, "This game cannot change the map from here.")
-		if changed == null or not changed.ok:
-			return _result(false, changed.error.message if changed != null and changed.error != null else "The change failed.", "refused")
-		var why := "staff" if is_staff(ctx) else "alone"
-		DotLog.info(CHANNEL, "map changed from the menu", {"map": String(id), "by": _who(ctx), "as": why})
-		if director.announce_fn.is_valid():
-			director.announce_fn.call("%s changed the map to %s." % [_who(ctx), label])
-		return _result(true, "Changing to %s." % label, "changed")
+		return await _change_now(ctx, id, label)
 
 	var needed := required_flag()
 	if not vote_available():
@@ -391,6 +374,29 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 	else:
 		parts.append(rocked.error.message)
 	return _result(nominated.ok or rocked.ok, " ".join(parts), "voted" if nominated.ok or rocked.ok else "refused")
+
+
+## A change the player may make outright: the map changes now.
+func _change_now(ctx: Object, id: StringName, label: String) -> Dictionary:
+	var director := commands.director
+	if director.is_voting():
+		return _result(false, "A vote is open; it decides. %s closes it first." % commands.command_name("endvote"), "refused")
+	var changed: DotResult = null
+	if change_fn.is_valid():
+		changed = await change_fn.call(id)
+	elif director.source.supports_apply():
+		changed = await director.source.apply(id)
+		if changed.ok and director.begin_on_apply:
+			director.begin(id)
+	else:
+		changed = DotResult.fail(DotError.CODE_UNSUPPORTED, "This game cannot change the map from here.")
+	if changed == null or not changed.ok:
+		return _result(false, changed.error.message if changed != null and changed.error != null else "The change failed.", "refused")
+	var why := "staff" if is_staff(ctx) else "alone"
+	DotLog.info(CHANNEL, "map changed from the menu", {"map": String(id), "by": _who(ctx), "as": why})
+	if director.announce_fn.is_valid():
+		director.announce_fn.call("%s changed the map to %s." % [_who(ctx), label])
+	return _result(true, "Changing to %s." % label, "changed")
 
 
 ## Why [param id] is refused when the source does not offer it now.
