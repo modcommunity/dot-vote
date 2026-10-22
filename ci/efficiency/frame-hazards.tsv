@@ -1,0 +1,8 @@
+# frame-hazards
+# Baselines only shrink: scripts/<gate> --update lowers or drops entries and refuses to add.
+addons/dot_vote/runtime/dot_vote_director.gd::_begin_countdown::string_build	2
+addons/dot_vote/runtime/dot_vote_director.gd::_decide_no_votes::string_build	1
+addons/dot_vote/runtime/dot_vote_director.gd::_do_change::string_build	1
+addons/dot_vote/runtime/dot_vote_director.gd::_extend_now::string_build	1
+addons/dot_vote/runtime/dot_vote_director.gd::_tick::string_build	1
+addons/dot_vote/runtime/dot_vote_director.gd::close_vote::duplicate	2
