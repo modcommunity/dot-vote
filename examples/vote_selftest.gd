@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 596
+const CHECKS := 598
 
 var _passed := 0
 var _failed := 0
@@ -807,11 +807,11 @@ func _test_rules_layering() -> void:
 
 
 func _test_cfg_layout() -> void:
-	_section("vote.yml: cfg/addons/dot_vote wins over the flat file, cfg/server/dot_vote wins over both")
+	_section("vote.yml: cfg/addons/dot_vote wins over the flat file, cfg/server/addons/dot_vote wins over both")
 
 	var legacy := DATA.path_join("legacy_cfg")
 	var addon_dir := "user://cfg/addons/dot_vote"
-	var server_dir := "user://cfg/server/dot_vote"
+	var server_dir := "user://cfg/server/addons/dot_vote"
 	DotPaths.remove_tree(addon_dir)
 	DotPaths.remove_tree(server_dir)
 	DotCfgLegacy.reset()
@@ -848,6 +848,14 @@ func _test_cfg_layout() -> void:
 
 	DotPaths.remove_tree(addon_dir)
 	DotPaths.remove_tree(server_dir)
+	DotPaths.remove_tree(legacy)
+	DotCfgLegacy.reset()
+	_write_text("user://cfg/server/dot_vote/vote.yml", "duration_sec: 1700\n")
+	rules = DotVoteRules.new()
+	res = rules.load_cfg("vote.yml", legacy)
+	_check(res.ok and is_equal_approx(rules.duration_sec, 1700.0), "the old cfg/server/dot_vote/ still loads")
+	_check(DotCfgLegacy.warned_count() == 1, "and warns once")
+	DotPaths.remove_tree("user://cfg/server/dot_vote")
 	DotCfgLegacy.reset()
 	_done()
 

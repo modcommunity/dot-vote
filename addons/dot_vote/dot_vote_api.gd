@@ -32,7 +32,7 @@ extends RefCounted
 # 12: DotVoteListSource.in_rotation_fn and rotation_order_fn: the rotation filter and order
 #     apply to every choice, the maps merged by follow_content included.
 # 13: DotVoteRules.apply_cfg_file and load_cfg read cfg/addons/dot_vote/<file>.yml and the
-#     operator's cfg/server/dot_vote/, with the flat cfg/<file>.yml as a shim until
+#     operator's cfg/server/addons/dot_vote/, with the flat cfg/<file>.yml as a shim until
 #     2026-12-31. Needs dot-core API level 16 (DotAddonConfig.apply_file).
 const LEVEL := 13
 const OLDEST := 1

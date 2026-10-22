@@ -13,7 +13,7 @@ extends DotConfig
 ## A [DotConfig], so it layers exactly like everything else in the family:
 ##
 ## [codeblock]
-## exported defaults  <  vote.json / cfg/addons/dot_vote/vote.yml  <  cfg/server/dot_vote/vote.yml  <  DOT_VOTE_*  <  --vote-*
+## exported defaults  <  vote.json / cfg/addons/dot_vote/vote.yml  <  cfg/server/addons/dot_vote/vote.yml  <  DOT_VOTE_*  <  --vote-*
 ## [/codeblock]
 ##
 ## [b]Enum settings are written by name in a file[/b] — [code]method: instant_runoff[/code],
@@ -944,7 +944,7 @@ func layer_over_defaults(file_path: String, overlay: Dictionary = {}) -> DotResu
 	return loaded
 
 
-## Applies [param file_name] from `cfg/addons/dot_vote/`, then the operator's `cfg/server/dot_vote/`.
+## Applies [param file_name] from `cfg/addons/dot_vote/`, then the operator's `cfg/server/addons/dot_vote/`.
 ## A flat [param legacy_dir]/[param file_name] is still read (one WARN) while no new copy exists.
 func apply_cfg_file(file_name: String = "vote.yml", legacy_dir: String = "res://cfg") -> DotResult:
 	return DotAddonConfig.apply_file(CFG_ADDON, file_name, legacy_dir, apply_dictionary)
