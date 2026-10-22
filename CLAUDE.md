@@ -4,7 +4,7 @@ Voting for what plays next: one ballot engine over ids, with rock-the-vote, nomi
 
 Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is specific to this addon.
 
-**Only dot-core is a dependency, at API level 15 or later (`DotCfgLegacy`).** dot-map and dot-server are optional, reached by `load()` and `call()`, and linked (`.gitignore`) only so the suite's integration sections can run against the real thing.
+**Only dot-core is a dependency, at API level 16 or later (`DotAddonConfig.apply_file`).** dot-map and dot-server are optional, reached by `load()` and `call()`, and linked (`.gitignore`) only so the suite's integration sections can run against the real thing.
 
 ## Read before
 

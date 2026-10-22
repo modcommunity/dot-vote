@@ -152,7 +152,7 @@ godot --headless --path . res://examples/vote_selftest.tscn
 
 ## Dependencies
 
-**dot-core** (API level 12 or later, for `DotCommandNames`), and nothing else. dot-server and dot-map are optional and are reached by duck typing.
+**dot-core** (API level 16 or later, for `DotAddonConfig.apply_file` and `DotCommandNames`), and nothing else. dot-server and dot-map are optional and are reached by duck typing.
 
 ```bash
 ln -s ../../dot-core/addons/dot_core addons/dot_core
