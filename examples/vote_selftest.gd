@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 589
+const CHECKS := 596
 
 var _passed := 0
 var _failed := 0
@@ -51,6 +51,7 @@ func _run() -> void:
 	_test_choices()
 	_test_rules_layering()
 	_test_rules_validate()
+	_test_cfg_layout()
 	_test_history()
 	_test_nominations()
 	_test_counting()
@@ -803,6 +804,59 @@ func _test_rules_layering() -> void:
 	_check(rules.cli_prefix() == "--vote-", "and so is the command-line one")
 
 	_done()
+
+
+func _test_cfg_layout() -> void:
+	_section("vote.yml: cfg/addons/dot_vote wins over the flat file, cfg/server/dot_vote wins over both")
+
+	var legacy := DATA.path_join("legacy_cfg")
+	var addon_dir := "user://cfg/addons/dot_vote"
+	var server_dir := "user://cfg/server/dot_vote"
+	DotPaths.remove_tree(addon_dir)
+	DotPaths.remove_tree(server_dir)
+	DotCfgLegacy.reset()
+
+	_write_text(legacy.path_join("vote.yml"), "duration_sec: 900\nrtv_fraction: 0.4\n")
+	var rules := DotVoteRules.new()
+	var res := rules.load_cfg("vote.yml", legacy)
+	_check(res.ok and is_equal_approx(rules.duration_sec, 900.0), "only the flat file: it is still read")
+	_check(DotCfgLegacy.warned_count() == 1, "and warned once")
+	DotVoteRules.new().load_cfg("vote.yml", legacy)
+	_check(DotCfgLegacy.warned_count() == 1, "a second load does not warn again")
+
+	_write_text(addon_dir.path_join("vote.yml"), "duration_sec: 1200\n")
+	rules = DotVoteRules.new()
+	res = rules.load_cfg("vote.yml", legacy)
+	_check(
+		res.ok and is_equal_approx(rules.duration_sec, 1200.0),
+		"the new path wins over the flat file"
+	)
+	_check(
+		is_equal_approx(rules.rtv_fraction, DotVoteRules.new().rtv_fraction),
+		"and the two are never merged"
+	)
+
+	_write_text(server_dir.path_join("vote.yml"), "duration_sec: 1500\n")
+	rules = DotVoteRules.new()
+	res = rules.load_cfg("vote.yml", legacy)
+	_check(res.ok and is_equal_approx(rules.duration_sec, 1500.0), "the operator's server layer wins")
+
+	_write_text(addon_dir.path_join("vote.yml"), "duration_sec: 1200\nrtv_fraction: 0.5\n")
+	rules = DotVoteRules.new()
+	rules.load_cfg("vote.yml", legacy)
+	_check(is_equal_approx(rules.rtv_fraction, 0.5), "a key only the addon layer sets still applies")
+
+	DotPaths.remove_tree(addon_dir)
+	DotPaths.remove_tree(server_dir)
+	DotCfgLegacy.reset()
+	_done()
+
+
+func _write_text(path: String, text: String) -> void:
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(text)
+	f.close()
 
 
 func _test_rules_validate() -> void:

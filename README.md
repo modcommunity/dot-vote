@@ -136,6 +136,8 @@ var layered := rules.layer_over_defaults(
 
 A result that does not validate is refused whole, and the game keeps its own defaults.
 
+An operator's yml lives in `cfg/addons/dot_vote/vote.yml` (and `map_vote.yml`), with `cfg/server/dot_vote/` over it: `rules.load_cfg("vote.yml")` reads both, then `DOT_VOTE_*` and `--vote-*`. The old flat `cfg/vote.yml` is still read, with one WARN, until 2026-12-31 (`DotCfgLegacy`); when the new file exists it wins whole.
+
 ## Validating it
 
 ```bash

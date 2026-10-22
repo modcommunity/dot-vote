@@ -13,7 +13,7 @@ extends DotConfig
 ## A [DotConfig], so it layers exactly like everything else in the family:
 ##
 ## [codeblock]
-## exported defaults  <  vote.json / vote.yml  <  DOT_VOTE_*  <  --vote-*
+## exported defaults  <  vote.json / cfg/addons/dot_vote/vote.yml  <  cfg/server/dot_vote/vote.yml  <  DOT_VOTE_*  <  --vote-*
 ## [/codeblock]
 ##
 ## [b]Enum settings are written by name in a file[/b] — [code]method: instant_runoff[/code],
@@ -30,6 +30,9 @@ extends DotConfig
 ## Not [code]CHANNEL[/code]: [DotConfig] already declares one, and a subclass that
 ## redeclares a parent's member does not parse.
 const RULES_CHANNEL := "vote.rules"
+
+## The addon name [DotAddonConfig] turns into the folder `dot_vote`.
+const CFG_ADDON := "dot-vote"
 
 ## When a vote happens at all.
 enum Trigger {
@@ -939,6 +942,45 @@ func layer_over_defaults(file_path: String, overlay: Dictionary = {}) -> DotResu
 	apply_dictionary(defaults, "defaults")
 
 	return loaded
+
+
+## Applies [param file_name] from `cfg/addons/dot_vote/`, then the operator's `cfg/server/dot_vote/`.
+## A flat [param legacy_dir]/[param file_name] is still read (one WARN) while no new copy exists.
+func apply_cfg_file(file_name: String = "vote.yml", legacy_dir: String = "res://cfg") -> DotResult:
+	var layers := DotAddonConfig.file_layers(CFG_ADDON, file_name)
+	var newest := (
+		layers[layers.size() - 1] if not layers.is_empty()
+		else DotAddonConfig.write_dir_for(CFG_ADDON).path_join(file_name)
+	)
+	var old_path := legacy_dir.path_join(file_name) if legacy_dir != "" else ""
+	if old_path != "" and DotCfgLegacy.find(old_path, newest) == old_path:
+		layers = PackedStringArray([old_path])
+
+	var applied := PackedStringArray()
+	for path in layers:
+		var parsed := DotYaml.parse_file(path)
+		if not parsed.ok:
+			return parsed.wrap("Could not read '%s'." % path)
+		if parsed.value == null:
+			continue
+		if not (parsed.value is Dictionary):
+			return DotResult.fail(DotError.CODE_PARSE, "'%s' must hold a mapping at the top level." % path)
+		applied.append_array(apply_dictionary(parsed.value as Dictionary, path))
+	return DotResult.success(applied)
+
+
+## [method apply_cfg_file], then `DOT_VOTE_*`, `--vote-*` and validation: [method DotConfig.load_layered] for the yml layout.
+func load_cfg(file_name: String = "vote.yml", legacy_dir: String = "res://cfg") -> DotResult:
+	unknown_keys = PackedStringArray()
+	var file_res := apply_cfg_file(file_name, legacy_dir)
+	if not file_res.ok:
+		return file_res
+	apply_env()
+	apply_cli()
+	var valid := validate()
+	if not valid.ok:
+		return valid.wrap("Configuration is invalid.")
+	return DotResult.success(self)
 
 
 ## Takes out what a host cannot drive, and says what it took.
