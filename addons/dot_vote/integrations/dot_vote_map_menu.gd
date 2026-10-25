@@ -379,8 +379,10 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 ## A change the player may make outright: the map changes now.
 func _change_now(ctx: Object, id: StringName, label: String) -> Dictionary:
 	var director := commands.director
+	# Whoever may change the map outright (staff, or the only human) outranks an open ballot:
+	# one left open by players who have since gone refused the last person on the server.
 	if director.is_voting():
-		return _result(false, "A vote is open; it decides. %s closes it first." % commands.command_name("endvote"), "refused")
+		var _called_off := director.cancel_vote()
 	var changed: DotResult = null
 	if change_fn.is_valid():
 		changed = await change_fn.call(id)

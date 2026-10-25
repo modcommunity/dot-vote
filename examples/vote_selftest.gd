@@ -26,7 +26,7 @@ extends Node
 
 const DATA := "user://dot_vote_selftest"
 
-const CHECKS := 604
+const CHECKS := 605
 
 var _passed := 0
 var _failed := 0
@@ -496,6 +496,14 @@ func _test_map_menu_humans(console: Node, commands: DotVoteCommands, director: D
 	await get_tree().process_frame
 	_check(now_ids.size() == before + 1 and str(last.call().get("how", "")) == "changed",
 		"alone with sv_map_menu_alone 1, a guest's choice changes the map (%s)" % str(last.call().get("text", "")))
+
+	director.begin(&"atrium")
+	director.open_vote()
+	before = now_ids.size()
+	console.call("execute", "mapmenu docks", player)
+	await get_tree().process_frame
+	_check(now_ids.size() == before + 1 and not director.is_voting() and str(last.call().get("how", "")) == "changed",
+		"alone, an open ballot is called off and the choice changes the map (%s)" % str(last.call().get("text", "")))
 
 	console.call("execute", "sv_map_menu_alone 0", null)
 	director.begin(&"docks")

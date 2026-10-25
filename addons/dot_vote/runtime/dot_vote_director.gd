@@ -1129,6 +1129,19 @@ func cancel_countdown() -> bool:
 	return true
 
 
+## Calls off an open ballot without acting on it, so a map can be changed outright.
+func cancel_vote() -> bool:
+	if state != State.VOTING:
+		return false
+
+	var result := DotVoteResult.empty("The vote was called off.")
+	DotLog.info(CHANNEL, "vote called off", {"reason": String(_vote_reason)})
+	_say(result.summary)
+	vote_closed.emit(result)
+	_carry_on()
+	return true
+
+
 # --- Casting and closing ---------------------------------------------------
 
 ## Records a vote. [param choices] is in preference order; one entry is the usual case.
