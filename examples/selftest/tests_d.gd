@@ -284,7 +284,7 @@ func _test_map_menu_3() -> void:
 
 
 ## Who is a human, and how many: the lone player, two of them, the owner's minimum, a majority,
-## and the host. The live bug of 2026-10-14 was a guest's M choice changing a public server's map.
+## and the host. A guest's M choice once changed a public server's map.
 func _test_map_menu_humans(console: Node, commands: DotVoteCommands, director: DotVoteDirector,
 		rules: DotVoteRules, sent: Array, now_ids: Array, player: Object, moderator: Object) -> void:
 	var menu := commands.map_menu
@@ -461,10 +461,9 @@ func _test_choices_2() -> void:
 		"and for the cooldown"
 	)
 
-	# The aliasing this family has now found in DotLeaderboardDef, DotTimerZone.payload,
-	# three of DotTimerRecord's dictionaries and DotMapDef.meta. A Dictionary is a
-	# reference in GDScript, so a to_dictionary() that hands out its own member gives
-	# every caller the same object.
+	# A Dictionary is a reference in GDScript, so a to_dictionary() that hands out its own member
+	# gives every caller the same object (also found in DotLeaderboardDef, DotTimerZone.payload,
+	# DotTimerRecord and DotMapDef.meta).
 	var source_choice := DotVoteChoice.of(&"m")
 	source_choice.meta = {"nested": {"tier": 3}}
 

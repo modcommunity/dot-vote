@@ -403,9 +403,8 @@ func _test_apply_moments_2() -> void:
 
 
 #
-# Everything below is a feature the long-standing community map-choosers have and this
-# addon did not, or had in a shape an operator could not reach. The parity table is in
-# docs/parity.md; each section here is one row group of it, run rather than read.
+# Features the long-standing community map-choosers have; docs/parity.md has the table,
+# each section here is one row group of it, run rather than read.
 
 
 func _test_chooser_settings() -> void:

@@ -4,10 +4,8 @@ extends "res://addons/dot_vote/runtime/dot_vote_director_state.gd"
 ## Questions, ballot filling and reporting of [DotVoteDirector], kept apart so each file stays readable.
 
 ## Tells the director what is running now, and starts its clock.
-##
-## Call it once at boot and after every change — including a change this director did
-## not cause, because an operator typing `changelevel` by hand still resets the map's
-## time limit and everybody's rock-the-vote.
+## Call it at boot and after every change, including one this director did not cause (a hand-typed `changelevel`
+## still resets the time limit and everybody's rock-the-vote).
 func begin(id: StringName) -> void:
 	_current_id = id
 	# Before the clock starts, so a choice that arrived since the last ballot starts with
@@ -26,12 +24,8 @@ func begin(id: StringName) -> void:
 
 
 ## Starts what is running again from its configured start, without changing it.
-##
-## A fresh clock at the choice's own limit, no rock-the-vote, every extend, no ballot, no
-## countdown and no decided change — everything [method begin] resets, without the second
-## entry in the history that calling [method begin] again would write, which would shorten
-## every cooldown by one play. What waking from hibernation does
-## ([member DotVoteRules.wake_restart]); public for an admin's "restart the map clock".
+## Everything [method begin] resets, without the second history entry calling it again would write (that would shorten
+## every cooldown by one play). What waking from hibernation does ([member DotVoteRules.wake_restart]); an admin may call it too.
 func restart() -> void:
 	_reset_to_start()
 	_cooldown_remaining = 0.0
@@ -112,15 +106,8 @@ func _cue(id: String) -> void:
 
 
 ## Forgets everything one player did. Call when they disconnect.
-##
-## [b]Their rock-the-vote goes and their nominations stay[/b], which is not an
-## oversight. A rock-the-vote is a fraction of the people who are here, so keeping a
-## leaver's makes the map end on the votes of people who left; a nomination is a
-## request of the server, and somebody who nominated a map and then crashed still
-## wants it played.
-##
-## [member DotVoteRules.nominations_forget_leavers] reverses the second half, for a
-## server that wants the long-standing map-choosers' behaviour.
+## Their rock-the-vote goes (a leaver's would end the map on votes of people who left) and their nominations stay
+## (a server request); [member DotVoteRules.nominations_forget_leavers] reverses the second half.
 func forget_voter(voter: StringName) -> void:
 	clock.unrock(voter)
 
@@ -153,10 +140,9 @@ func pending_id() -> StringName:
 	return _pending_id
 
 
-## Asks the source to re-read a list it is fed rather than holds
-## ([member DotVoteListSource.entries_fn]): when a choice begins and whenever a ballot is
-## about to be filled. Duck-typed, so a source written before the hook existed, or one
-## that is not a [DotVoteSource] at all, is left alone.
+## Asks the source to re-read a list it is fed rather than holds ([member DotVoteListSource.entries_fn]):
+## when a choice begins and whenever a ballot is about to be filled. Duck-typed, so a source that is not a
+## [DotVoteSource] is left alone.
 func _refresh_source() -> void:
 	if source != null and source.has_method("before_ballot"):
 		source.call("before_ballot")
@@ -175,11 +161,9 @@ func reload() -> DotResult:
 	return reloaded
 
 
-## What the source would play next, ignoring the vote.
-##
-## Straight down the source's order from what is running, skipping anything on
-## cooldown or unavailable. What [constant DotVoteRules.NoQuorum.ROTATION] uses, and
-## what a `nextmap` command reports.
+## What the source would play next, ignoring the vote: down its order from what is running,
+## skipping anything on cooldown or unavailable. What [constant DotVoteRules.NoQuorum.ROTATION] uses,
+## and what a `nextmap` command reports.
 func _next_in_rotation() -> StringName:
 	if source == null:
 		return &""
@@ -227,9 +211,7 @@ func next_in_rotation() -> StringName:
 
 
 ## The options a ballot opened right now would carry.
-##
-## Public because a HUD wants to show them before the vote and because it is the one
-## piece of this addon worth testing on its own.
+## Public because a HUD wants to show them before the vote and it is the piece worth testing on its own.
 func build_options(players: int) -> Array[DotVoteChoice]:
 	var out: Array[DotVoteChoice] = []
 	var taken := {}
@@ -305,10 +287,8 @@ func _eligible_pool(
 		if not choice.available_for(players):
 			continue
 
-		# [b]By the name on the ballot as well as by id.[/b] A player tells options apart
-		# only by what is printed, so a second install of the running game under another id
-		# — a built-in copy beside a published one — is offered as "the same thing again",
-		# and a one-game server held a ballot of that game against Extend.
+		# By the name on the ballot as well as by id: players tell options apart only by what is printed,
+		# so a built-in copy beside a published install of the running game would be offered as "the same thing again".
 		if not rules.include_current and (
 			choice.id == _current_id
 			or (current_name != "" and _shown_name(choice) == current_name)
@@ -329,11 +309,8 @@ func _shown_name(choice: DotVoteChoice) -> String:
 
 
 ## Whether a ballot opened now would offer anything that changes what is running.
-##
-## [b]Not [method build_options], which would answer it[/b]: filling advances the
-## SEQUENTIAL cursor, so asking would skip a page of the rotation. Cooldowns are ignored
-## here because [method build_options] drops them rather than the ballot when they are all
-## that is left.
+## Not [method build_options]: filling advances the SEQUENTIAL cursor, so asking would skip a page of the rotation.
+## Cooldowns are ignored because [method build_options] drops them when they are all that is left.
 func has_alternatives(players: int = -1) -> bool:
 	if source == null:
 		return false
@@ -452,14 +429,9 @@ func _weighted_shuffle(pool: Array[DotVoteChoice]) -> Array[DotVoteChoice]:
 	return out
 
 
-## One choice, drawn at random from what a ballot opened now would offer, or
-## [code]&""[/code] when there is nothing but what is running.
-##
-## The ballot's own pool ([method _eligible_pool]): enabled, not on cooldown (dropped when
-## everything is, as a ballot drops it), and never what is running when there is anything
-## else — even under [member DotVoteRules.include_current], because a draw that lands on the
-## current map is a server that did not change. Availability is judged for one player, the
-## next to arrive: a choice that needs eight is the wrong thing to hand them.
+## One choice drawn at random from what a ballot opened now would offer, or [code]&""[/code] when there is only what is running.
+## The ballot's pool ([method _eligible_pool]): enabled, off cooldown (dropped when all are), never the running one when
+## anything else exists, even under [member DotVoteRules.include_current]. Availability is judged for the next player to arrive.
 func empty_draw() -> StringName:
 	if source == null:
 		return &""
@@ -491,12 +463,9 @@ func empty_draw() -> StringName:
 # HUD, a menu or another addon can ask rather than duplicate the state.
 
 
-## Whether the clock has run out and the change is waiting for the round in progress to
-## end, under [constant DotVoteRules.TimeUp.FINISH_ROUND].
-##
-## False the moment a round ends, once [member DotVoteRules.finish_round_max_sec] has
-## passed, on a host that is not [member round_based], while [member round_in_progress_fn]
-## answers false, and for any limit but time or score.
+## Whether the clock has run out and the change waits for the round in progress to end ([constant DotVoteRules.TimeUp.FINISH_ROUND]).
+## False once a round ends, once [member DotVoteRules.finish_round_max_sec] has passed, on a host that is not
+## [member round_based], while [member round_in_progress_fn] answers false, and for any limit but time or score.
 func is_finishing_round() -> bool:
 	if rules == null or rules.time_up != DotVoteRules.TimeUp.FINISH_ROUND:
 		return false
@@ -562,11 +531,9 @@ func can_nominate() -> bool:
 	return nomination_state() == NominationState.YES
 
 
-## Everything a player could nominate right now, in the source's order.
-##
-## [b]The list a nomination menu draws[/b] — so it leaves out exactly what
-## [method nominate] would refuse: the disabled, the wrong player count, what is
-## running, and what is on cooldown, each unless the rules allow it.
+## Everything a player could nominate right now, in the source's order: the list a nomination menu draws.
+## It leaves out exactly what [method nominate] would refuse (disabled, wrong player count, running, on cooldown),
+## each unless the rules allow it.
 func nominatable_ids() -> Array[StringName]:
 	var out: Array[StringName] = []
 

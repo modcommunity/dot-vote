@@ -28,10 +28,9 @@ func nominate(voter: StringName, id: StringName) -> DotResult:
 	var admin := _is_admin(voter)
 	var bypass := admin and rules.admin_nominations_bypass
 
-	# Refused while a ballot is open or coming, and once the next is decided. A
-	# nomination then is one that cannot reach any ballot — it would be consumed by
-	# nothing, or cleared by the change — and accepting it is telling a player something
-	# happened when nothing will.
+	# Refused while a ballot is open or coming, and once the next is decided: such a nomination
+	# reaches no ballot (consumed by nothing, or cleared by the change), so accepting it would
+	# tell the player something happened when nothing will.
 	match nomination_state():
 		NominationState.VOTE_IN_PROGRESS:
 			return DotResult.fail(
@@ -79,12 +78,9 @@ func withdraw_nomination(voter: StringName, id: StringName) -> bool:
 	return nominations.remove(voter, id, DotVoteNominations.REASON_WITHDRAWN)
 
 
-## Puts [param id] on the next ballot whatever the caps, the cooldown or the switches
-## say. An admin's command; the caller checks who is asking.
-##
-## It takes none of the places reserved for players' nominations — see
-## [method DotVoteNominations.forced_ids] — so an admin adding a map does not quietly
-## cost the players one of theirs.
+## Puts [param id] on the next ballot whatever the caps, cooldown or switches say. An admin's command; the caller checks who asks.
+## It takes none of the places reserved for players ([method DotVoteNominations.forced_ids]), so an admin adding a map
+## does not cost the players one of theirs.
 func force_nominate(id: StringName, by: StringName = &"admin") -> DotResult:
 	if source == null:
 		return DotResult.fail(DotError.CODE_STATE, "No source.")
@@ -228,11 +224,8 @@ func apply_pending() -> DotResult:
 
 
 ## Sets what plays next by hand, as though a vote had chosen it. An admin's command.
-##
-## It takes effect when the clock runs out — the end of the map, not now: an admin who
-## wants now has [code]changelevel[/code] — and it counts as the end-of-map vote having
-## finished, so no ballot opens in the meantime. Rocking the vote after it follows
-## [member DotVoteRules.rtv_after_decided], exactly as it would after a vote.
+## Takes effect when the clock runs out (an admin who wants now has [code]changelevel[/code]) and counts as the
+## end-of-map vote having finished; rocking the vote after it follows [member DotVoteRules.rtv_after_decided].
 func set_next(id: StringName) -> DotResult:
 	if source == null:
 		return DotResult.fail(DotError.CODE_STATE, "No source.")

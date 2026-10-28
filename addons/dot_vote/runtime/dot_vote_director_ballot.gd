@@ -3,15 +3,9 @@ extends "res://addons/dot_vote/runtime/dot_vote_director_nominate.gd"
 
 ## The ballot, countdown, casting and closing of [DotVoteDirector], kept apart so each file stays readable.
 
-## Starts a vote the way the rules want it started: with the
-## [member DotVoteRules.vote_warning_sec] countdown first, or at once when there is none.
-##
-## [b]What everything that is not a test should call.[/b] [method open_vote] opens a
-## ballot this instant, which is right for a client mirroring a server's ballot and for
-## a suite, and wrong for a server whose operator asked for fifteen seconds of warning.
-##
-## [param force] is an admin's "vote now": it replaces a change already decided rather
-## than being refused by it.
+## Starts a vote the way the rules want it: the [member DotVoteRules.vote_warning_sec] countdown first, or at once when there is none.
+## What non-test code should call; [method open_vote] opens instantly, right for a client mirror or a suite.
+## [param force] is an admin's "vote now": it replaces a change already decided instead of being refused.
 func start_vote(
 	reason: StringName = DotVoteClock.REASON_MANUAL,
 	force: bool = false
@@ -24,11 +18,9 @@ func start_vote(
 		_refresh_source()
 
 	if not ready.ok:
-		# [b]Another vote on screen is a wait, not a no.[/b] The refusal says "this one will
-		# follow it", and until 2026-10-11 nothing made it true for a ballot a HOST asked for:
-		# a MANUAL game opens its round's ballot once, so a refusal because the server's game
-		# vote was up was that round's ballot gone. Owed through the same retry a due vote
-		# takes, so it opens the tick the other one is down.
+		# Another vote on screen is a wait, not a no: a MANUAL game opens its round's ballot once,
+		# so a refusal here would lose it. Owed through the same retry a due vote takes, so it
+		# opens the tick the other one is down.
 		if _refused_only_for_busy():
 			_vote_due_pending = true
 			_vote_due_reason = reason
@@ -118,10 +110,8 @@ func _can_open() -> DotResult:
 
 
 ## Opens a ballot now, with no countdown.
-##
-## [param only] puts exactly those ids on the ballot instead of filling it — an admin's
-## hand-picked shortlist. Ids the source does not know are dropped with a warning
-## rather than refusing the whole ballot.
+## [param only] puts exactly those ids on the ballot (an admin's shortlist); unknown ids are dropped with a warning,
+## not a refusal of the whole ballot.
 func open_vote(
 	reason: StringName = DotVoteClock.REASON_MANUAL,
 	only: Array[StringName] = []
@@ -403,13 +393,8 @@ func _moment_for(reason: StringName) -> int:
 
 
 ## Nothing changes: carry on with what is running.
-##
-## [b]Two different "carry on"s, and using the wrong one is a real bug.[/b] After an
-## end-of-map ballot the clock is expired or nearly so, and it restarts — or the next
-## tick expires it again and opens another ballot at once. After a rock-the-vote ballot
-## the clock still had time on it; restarting it would hand an unpopular map a fresh
-## limit for having been voted on, so it resumes where it stopped, and rocking the vote
-## waits out [member DotVoteRules.rtv_interval_sec] before it can pass again.
+## After an end-of-map ballot the clock restarts, or the next tick expires it again and opens another ballot. After a
+## rock-the-vote ballot it resumes where it stopped, so an unpopular map gets no fresh limit for being voted on.
 func _carry_on() -> void:
 	state = State.RUNNING
 
@@ -422,10 +407,7 @@ func _carry_on() -> void:
 
 
 ## Decides a ballot nobody voted in, per [member DotVoteRules.on_no_votes].
-##
-## Done to the result BEFORE it is announced, so [signal vote_closed] carries what
-## actually happens rather than "nobody voted" followed by a change nobody was told
-## about.
+## Done before the result is announced, so [signal vote_closed] carries what actually happens.
 func _decide_no_votes(result: DotVoteResult) -> void:
 	if result.outcome != DotVoteResult.Outcome.EMPTY or ballot.options.is_empty():
 		return
@@ -493,11 +475,9 @@ func _extend_now() -> void:
 		_say("Extended. %s." % clock.timeleft_line())
 		return
 
-	# Out of extends and the players voted for one anyway. A ballot no longer offers
-	# "extend" once it cannot happen (DotVoteBallot.extend_available), so this is reached
-	# only by a host casting EXTEND by hand. Left running rather than silently changing:
-	# the clock is already expired, and the honest thing is to say so and let the next
-	# vote decide.
+	# Out of extends yet players voted for one: only a host casting EXTEND by hand reaches this
+	# (DotVoteBallot.extend_available hides it). Left running rather than silently changing;
+	# the clock is expired, so say so and let the next vote decide.
 	_say("This cannot be extended again.")
 	clock.start(source.find(_current_id) if source != null else null)
 
@@ -511,10 +491,8 @@ func vote_seconds_remaining() -> float:
 
 
 ## Rocks the vote on everybody's behalf. An admin's command.
-##
-## With the next choice already decided it brings that forward — now, after the apply
-## delay — whatever [member DotVoteRules.rtv_after_decided] says, because an admin is not
-## a player being refused a second say. Otherwise it is exactly a rock-the-vote passing.
+## With the next choice already decided it brings that forward whatever [member DotVoteRules.rtv_after_decided]
+## says; otherwise it is exactly a rock-the-vote passing.
 func force_rtv() -> DotResult:
 	if not rules.enabled:
 		return DotResult.fail(DotError.CODE_UNSUPPORTED, "Voting is turned off.")
@@ -541,13 +519,8 @@ func force_rtv() -> DotResult:
 
 
 ## A vote fell due with nothing to choose between, so none is held and play carries on.
-##
-## [b]Rather than a ballot of Extend alone[/b], which is all a server whose content offers
-## one thing — or one thing these players can play — could ever put up: a full-screen
-## question with one answer, on a clock, every time the limit ran out. A refusal instead
-## would be worse: the due vote is retried until it opens, so the clock would sit expired
-## for ever. The clock is restarted exactly as a ballot that chose Extend would leave it,
-## minus the extend it would have used.
+## Not a ballot of Extend alone, and not a refusal (the due vote would retry and the clock sit expired forever).
+## The clock restarts as an Extend would leave it, minus the extend it would have used.
 func _pass_over(reason: StringName) -> void:
 	DotLog.info(CHANNEL, "a vote was due and there is nothing else to vote for; carrying on", {
 		"reason": String(reason), "current": String(_current_id),
