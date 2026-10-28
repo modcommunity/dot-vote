@@ -23,14 +23,12 @@ addons/dot_vote/runtime/dot_vote_clock.gd::banner	3
 addons/dot_vote/runtime/dot_vote_clock.gd::history	2
 addons/dot_vote/runtime/dot_vote_clock.gd::long_block	10
 addons/dot_vote/runtime/dot_vote_clock_view.gd::long_block	5
-addons/dot_vote/runtime/dot_vote_director.gd::banner	14
-addons/dot_vote/runtime/dot_vote_director.gd::history	2
-addons/dot_vote/runtime/dot_vote_director.gd::long_block	30
+addons/dot_vote/runtime/dot_vote_director.gd::history	1
+addons/dot_vote/runtime/dot_vote_director.gd::long_block	7
 addons/dot_vote/runtime/dot_vote_history.gd::long_block	2
 addons/dot_vote/runtime/dot_vote_list_source.gd::commented_code	1
 addons/dot_vote/runtime/dot_vote_list_source.gd::long_block	6
 addons/dot_vote/runtime/dot_vote_nominations.gd::long_block	6
 addons/dot_vote/runtime/dot_vote_source.gd::long_block	5
 examples/layer_probe.gd::long_block	1
-examples/vote_selftest.gd::history	1
-examples/vote_selftest.gd::long_block	5
+examples/vote_selftest.gd::long_block	1

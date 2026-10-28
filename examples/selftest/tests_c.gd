@@ -217,12 +217,7 @@ func _test_admin_and_queries_4() -> void:
 
 
 ## A real dot-server game manager, voted over and actually changed.
-##
-## [b]Nothing here names a dot-server class.[/b] Every object is built by loading its
-## script and every field is set reflectively — which is not a trick to make the suite
-## run without dot-server installed (though it does): it is exactly the path
-## [DotVoteGameSource] takes, so this section fails if the duck typing is wrong, which
-## is the only way it can be wrong.
+## Objects are built reflectively, the path [DotVoteGameSource] takes, so wrong duck typing fails here.
 func _test_real_game_manager() -> void:
 	_section("A real dot-server game manager, voted over and actually changed")
 
@@ -400,10 +395,8 @@ func _test_real_game_manager_3() -> void:
 		"under the NEW game's time limit (%.0f)" % _v_real_game_manager_director.clock.duration
 	)
 
-	# What a game's own map vote layers over its defaults: the running game's metadata,
-	# found through the registry with nothing named. Duck typing that is wrong returns an
-	# empty dictionary, which is indistinguishable from a game with nothing configured —
-	# so it is asserted against a real manager rather than trusted.
+	# The running game's metadata, found through the registry. Wrong duck typing returns an
+	# empty dictionary, which looks like a game with nothing configured.
 	var running := DotVoteGameSource.running_game_metadata("vote")
 	_check(
 		int(running.get("time_limit_sec", 0)) == 60,

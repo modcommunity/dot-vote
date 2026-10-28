@@ -1,4 +1,2 @@
 # size
 # Baselines only shrink: scripts/<gate> --update lowers or drops entries and refuses to add.
-addons/dot_vote/runtime/dot_vote_director.gd	2038
-examples/vote_selftest.gd	3732
