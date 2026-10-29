@@ -2,12 +2,7 @@
 extends EditorPlugin
 
 ## Editor entry point for dot-vote. Registers inspector types only.
-##
-## No autoloads. A vote director is a tempting singleton and it is the wrong shape for
-## the family's usual reason: a test that runs a server and a client in one process
-## needs two of them — one deciding and one mirroring — and a server that votes over
-## its games AND over its maps needs two as well, which is exactly the arrangement this
-## addon was built to allow.
+## No autoloads: a test with a server and a client in one process, or a server voting over games and maps, needs two directors.
 
 const _ICON := "res://addons/dot_vote/icon_placeholder.svg"
 

@@ -2,18 +2,8 @@ class_name DotVoteHistory
 extends RefCounted
 
 ## What has been played, and what may not be offered again yet.
-##
-## [b]The cooldown is the whole design.[/b] Without one a server plays its three most
-## popular maps for ever, because a vote is a popularity contest and popularity does
-## not change between rounds. Every server in this genre grows a "recently played"
-## exclusion, and the number that matters is how far back it remembers: too few and
-## the thing you have just played is on the menu again, too many and a small server
-## has nothing left to offer.
-##
-## Generalised from dot-map's rotation, and with the clamp that made that one honest:
-## a cooldown longer than the pool is shortened rather than allowed to exclude
-## everything, because a rotation that offers nothing leaves the server where it is
-## for ever with no error anywhere.
+## The cooldown is the design: a vote is a popularity contest, so without one a server plays its three favourites for ever.
+## One longer than the pool is shortened, since a rotation that offers nothing stalls with no error.
 
 # No log channel: in-memory state asked many times per ballot fill. The one condition an
 # operator must hear about -- everything on cooldown -- is logged by DotVoteDirector.
@@ -66,10 +56,7 @@ func times_played(id: StringName) -> int:
 
 
 ## Whether this is still on cooldown.
-##
-## [param pool_size] is how much there is to choose from. Passing it is what lets the
-## depth be clamped; passing 0 says "do not clamp", which is right for a check against
-## one specific nomination rather than against a ballot being filled.
+## [param pool_size] lets the depth be clamped; 0 means do not clamp (a check against one nomination).
 func on_cooldown(
 	id: StringName,
 	pool_size: int = 0,

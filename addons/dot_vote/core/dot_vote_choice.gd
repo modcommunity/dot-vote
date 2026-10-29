@@ -3,29 +3,10 @@ class_name DotVoteChoice
 extends Resource
 
 ## One thing that can be voted for: a game, a map, a mode, a mutator.
-##
-## [b]Deliberately not a game and not a map.[/b] It is an id, a name to show, and the
-## handful of facts a ballot has to know to decide whether to offer it — how many
-## players it wants, how long it runs for, whether it may be picked at random or only
-## nominated. What the id [i]means[/i] is a [DotVoteSource]'s business, which is the
-## only reason one vote system can drive dot-server's game list and dot-map's
-## catalogue without naming either.
-##
-## The alternative — a vote that takes a [code]DotGameDescriptor[/code] — was rejected
-## for the family's parse reason and then for a better one: a server that offers
-## "Arena", "Arena (low gravity)" and "surf_beginner" on one ballot is offering three
-## things of two different kinds, and a ballot that can only hold one kind cannot.
-##
-## [codeblock]
-## var choice := DotVoteChoice.of(&"arena", "Arena")
-## choice.time_limit_sec = 1800.0    # this one runs for half an hour
-## choice.min_players = 4            # and is not offered to three people
-## [/codeblock]
+## Deliberately an id, a name and the facts a ballot needs, not a game or a map; what the id means is a [DotVoteSource]'s business.
+## That is how one vote system drives dot-server's game list and dot-map's catalogue without naming either.
 
-## Id, unique within a source. What a vote returns and what history is keyed on.
-##
-## [b]Never renamed.[/b] History, cooldowns and per-choice configuration are all keyed
-## on it, so changing it makes a server think it has never played this.
+## Id, unique within a source; history, cooldowns and per-choice configuration are keyed on it, so never rename it.
 @export var id: StringName = &""
 
 ## Name shown on the ballot. Falls back to [member id].
@@ -38,11 +19,8 @@ extends Resource
 ## Free-text line under the name, where a ballot has room for one.
 @export var description: String = ""
 
-## A tag a source or a game filters on — [code]&"map"[/code], [code]&"game"[/code],
-## [code]&"casual"[/code].
-##
-## A [StringName] rather than an enum, for [DotMapDef]'s reason: this family should not
-## have an opinion about what categories a server divides its content into.
+## A tag a source or a game filters on, such as [code]&"map"[/code] or [code]&"casual"[/code].
+## A [StringName], not an enum: the family has no opinion on a server's categories.
 @export var group: StringName = &""
 
 @export_group("Availability")
@@ -51,45 +29,28 @@ extends Resource
 @export var enabled: bool = true
 
 ## Fewest players before it is offered. 0 = no floor.
-##
-## The point of a floor is a 32-player map on a server with four people on it: it is
-## still a legal choice and it is a bad evening, so it comes off the ballot rather
-## than out of the catalogue.
+## A 32-player map for four people is legal but a bad evening, so it leaves the ballot, not the catalogue.
 @export_range(0, 128, 1) var min_players: int = 0
 
 ## Most players before it stops being offered. 0 = no ceiling.
 @export_range(0, 128, 1) var max_players: int = 0
 
-## Never filled in at random — offered only when somebody nominates it.
-##
-## For the joke map, the 40-minute epic, the mode that needs organising. It stays
-## reachable by name and stops arriving unasked at three in the morning.
+## Never filled in at random, offered only when somebody nominates it.
+## For the joke map or the 40-minute epic.
 @export var nominate_only: bool = false
 
-## Whether this is one of the server's own, shipped choices rather than a custom one.
-##
-## [b]Informative only[/b] — nothing is refused for being unofficial. It is what
-## [member DotVoteRules.unofficial_marker] marks on a ballot, which is how a player
-## tells the map the game shipped with from the one a community uploaded last week.
-## A source reads it from the thing's own metadata ([code]vote: {official: false}[/code]);
-## true by default, because a server with no opinion should mark nothing.
+## Whether this is one of the server's own shipped choices; informative only, nothing is refused for it.
+## Read from the thing's metadata ([code]vote: {official: false}[/code]); true by default so a server with no opinion marks nothing.
 @export var official: bool = true
 
 @export_group("Duration")
 
 ## Seconds this choice runs for, overriding [member DotVoteRules.duration_sec].
-##
-## [b]Negative means "use the rules".[/b] Not zero: zero is a real and different
-## setting — a choice with no time limit at all, which ends only by vote — and a
-## server that wanted one and got the default instead would change away from it every
-## twenty minutes with nothing to say why.
+## Negative means "use the rules"; zero is a real setting (no limit, ends only by vote).
 @export_range(-1.0, 21600.0, 1.0) var time_limit_sec: float = -1.0
 
-## Rounds this choice runs for, overriding [member DotVoteRules.round_limit].
-##
-## Negative means "use the rules". Rounds and seconds are both limits and whichever
-## arrives first ends it — a best-of-nine that overruns still ends, and a slow
-## best-of-nine is not cut off at round four.
+## Rounds this choice runs for, overriding [member DotVoteRules.round_limit]; negative uses the rules.
+## Whichever of rounds and seconds arrives first ends it.
 @export_range(-1, 512, 1) var round_limit: int = -1
 
 @export_group("Selection")
@@ -97,18 +58,13 @@ extends Resource
 ## Relative likelihood under [constant DotVoteRules.Fill.WEIGHTED]. 0 excludes it.
 @export_range(0.0, 100.0, 0.1) var weight: float = 1.0
 
-## Plays this choice is excluded for after being played, overriding the rules.
-##
-## Negative uses [member DotVoteRules.cooldown]. For the one map everybody is sick of,
-## without lengthening the cooldown on everything.
+## Plays this choice is excluded for after being played; negative uses [member DotVoteRules.cooldown].
 @export_range(-1, 64, 1) var cooldown_override: int = -1
 
 @export_group("Metadata")
 
 ## Anything the game needs and this addon must not interpret.
-##
-## A source puts the thing itself in here — the descriptor, the map def — so a host
-## that gets a winning [DotVoteChoice] back does not have to look it up again.
+## A source puts the thing itself here so a host need not look the winner up again.
 @export var meta: Dictionary = {}
 
 
@@ -133,10 +89,7 @@ func label() -> String:
 
 
 ## Whether this may appear on a ballot for a server with this many players.
-##
-## [param nominated] relaxes [member nominate_only] only — the player counts still
-## apply, because somebody nominating a 32-player map for four people has not made it
-## a better idea.
+## [param nominated] relaxes [member nominate_only] only; the player counts still apply.
 func available_for(players: int, nominated: bool = false) -> bool:
 	if not enabled:
 		return false
@@ -184,11 +137,8 @@ func to_dictionary() -> Dictionary:
 		"round_limit": round_limit,
 		"weight": weight,
 		"cooldown_override": cooldown_override,
-		# Duplicated, and this is not defensive tidiness. A Dictionary is a reference in
-		# GDScript, so handing out the member means a caller that writes into what it was
-		# given writes into the choice — the exact aliasing that made every scoped
-		# DotLeaderboardDef on a server share one object, and that DotTimerZone.payload
-		# and DotMapDef.meta each had a copy of.
+		# Duplicated: a Dictionary is a reference, so handing out the member would let a
+		# caller write into the choice.
 		"meta": meta.duplicate(true),
 	}
 

@@ -1,44 +1,18 @@
 class_name DotVoteClock
 extends RefCounted
 
-## How long the current choice has left, in seconds and in rounds, and the two ways
-## the players can end it early.
-##
-## [b]A server that never changes is not a server.[/b] Somebody joins, plays the thing
-## they arrived on, and leaves — the catalogue, the rotation and the ballot all exist
-## and nothing ever reaches them. Every long-lived server in this genre grows the same
-## three mechanisms, and they are three because each covers a case the others do not:
-##
-## - a [b]limit[/b], so something ends even when nobody asks;
-## - [b]rock the vote[/b], so something everybody hates ends early;
-## - [b]extending[/b], so something everybody is enjoying does not end on a timer.
-##
-## [b]Counted in simulated seconds, advanced by the host.[/b] Not a wall clock: a
-## server that stalls for ten seconds should not lose ten seconds of its map, and a
-## test must be able to run an hour of it in a millisecond.
-##
-## [codeblock]
-## clock.start(choice)                    # a new game or map has begun
-## clock.advance(delta)                   # once per tick
-## clock.rock_the_vote(&"player_3", 12)   # somebody typed !rtv
-## [/codeblock]
+## How long the current choice has left, in simulated seconds and rounds, and the two ways players end it early.
+## Three mechanisms, each covering a case the others do not: a limit, rock the vote, extending.
+## Counted in seconds the host advances, not a wall clock, so a stall costs no map time and tests run an hour in a millisecond.
 
 const CHANNEL := "vote.clock"
 
-## The limit is up, or the players ended it.
-##
-## [param reason] is one of the [code]REASON_*[/code] constants. Emitted once per
-## choice; the host decides what happens — which is deliberately not this class's
-## business, because "the map is over" means something different in a round-based
-## game, a timer server and a replay being scrubbed.
+## The limit is up, or the players ended it; [param reason] is a [code]REASON_*[/code] constant.
+## Emitted once per choice. What happens next is the host's business: "over" differs in a round game, a timer server and a replay.
 signal expired(reason: StringName)
 
-## Time to open the ballot: [member DotVoteRules.vote_lead_sec] before the end, or
-## [member DotVoteRules.vote_lead_rounds] rounds before it.
-##
-## [b]Separate from [signal expired] and that is the entire point of a lead.[/b] A
-## ballot that opens when the time is already up either runs late or gives players ten
-## seconds to read it.
+## Time to open the ballot: [member DotVoteRules.vote_lead_sec] or [member DotVoteRules.vote_lead_rounds] before the end.
+## Separate from [signal expired] so the ballot is not opened when time is already up.
 signal vote_due(reason: StringName)
 
 ## Emitted once per mark in [member DotVoteRules.warn_at_sec].
@@ -49,11 +23,8 @@ signal rocked(voter: StringName, votes: int, needed: int)
 
 signal extended(seconds: float, rounds: int)
 
-## The score limit moved — an extend added [member DotVoteRules.extend_score] to it.
-##
-## [b]A host enforcing its own score limit has to hear this[/b], or the match ends on
-## the old number with the vote believing it extended. Separate from [signal extended]
-## so the connections every game already has to that signal keep their shape.
+## The score limit moved: an extend added [member DotVoteRules.extend_score] to it.
+## A host enforcing its own limit has to hear this, or the match ends on the old number.
 signal score_limit_changed(limit: int)
 
 ## A round ended. [param played] counts from 1.
@@ -112,10 +83,7 @@ static func of(p_rules: DotVoteRules) -> DotVoteClock:
 
 
 ## Starts the clock for a new choice. Call on every change.
-##
-## [param choice] may be null, in which case the rules' own limits are used. Its
-## per-choice overrides are what makes "each game has its own time limit" a property
-## of the game rather than a setting an operator has to remember to change with it.
+## [param choice] may be null (the rules' limits apply); its overrides make time limits a property of the game.
 func start(choice: DotVoteChoice = null) -> void:
 	duration = (
 		choice.duration_for(rules.duration_sec) if choice != null else rules.duration_sec
@@ -132,13 +100,8 @@ func start(choice: DotVoteChoice = null) -> void:
 	extends_used = 0
 	_rtv_blocked_until = 0.0
 
-	# [b]Running means started, NOT "has a limit".[/b] It used to mean the latter, and
-	# a choice with no time limit and no round limit — a legitimate configuration, and
-	# the one a vote-only server runs — then returned from `advance` before its elapsed
-	# time was counted. Nothing else uses `elapsed`, so nothing broke except the one
-	# thing that does: `rtv_delay_sec` is measured against it, so rocking the vote was
-	# refused for ever, on exactly the server whose only way to change anything is a
-	# vote. Found by asserting on `elapsed` rather than on the symptom.
+	# Running means started, not "has a limit": `elapsed` must count on a clock with no
+	# limit, because rtv_delay_sec is measured against it.
 	running = true
 
 	_rocked.clear()
@@ -152,13 +115,7 @@ func stop() -> void:
 
 
 ## Carries on from where the clock stopped, without restarting it.
-##
-## [b]What a rock-the-vote ballot that changed nothing needs, and [method start] is
-## wrong for it.[/b] Rocking the vote stops the clock — it has to, or the limit could
-## expire under the ballot — and restarting it afterwards would hand the map a fresh
-## thirty minutes for having been voted on, which is a reward for being unpopular. The
-## time left, the rounds played, the extensions and the warnings already given all stay.
-## The rock-the-vote tally goes: those players have had their vote.
+## For a rock-the-vote ballot that changed nothing: restarting would reward an unpopular map with a fresh limit. The rtv tally goes.
 func resume() -> void:
 	running = true
 	_expired = false
@@ -234,10 +191,7 @@ func note_round_end() -> bool:
 
 
 ## Records the leading score. Returns whether that ended the choice.
-##
-## [b]The host says what a score is[/b] — the top player's frags, the leading team's
-## round wins, a points total — and reports it whenever it changes. Only the leader
-## matters, because a limit is reached by whoever reaches it first.
+## The host says what a score is (frags, round wins, points); only the leader matters.
 func note_score(score: int) -> bool:
 	if _expired:
 		return false
@@ -301,7 +255,6 @@ func is_vote_due() -> bool:
 	return _vote_due
 
 
-# --- Extending -------------------------------------------------------------
 
 func can_extend() -> bool:
 	return rules.max_extends <= 0 or extends_used < rules.max_extends
@@ -358,7 +311,6 @@ func extend(seconds: float = -1.0, rounds: int = -1, score: int = -1) -> bool:
 	return true
 
 
-# --- Rock the vote ---------------------------------------------------------
 
 ## How many players must rock the vote right now. 0 when it cannot pass at all.
 func rtv_needed(player_count: int) -> int:
@@ -378,12 +330,8 @@ func rtv_wait_remaining() -> float:
 	return maxf(maxf(rules.rtv_delay_sec, _rtv_blocked_until) - elapsed, 0.0)
 
 
-## Registers a rock-the-vote. Succeeds whether or not it passed; check
-## [method rtv_passed] or watch [signal expired].
-##
-## [b]Idempotent per voter.[/b] Typing it twice is what a player does when nothing
-## visible happened, and counting it twice would let two people end a map on a
-## six-player server.
+## Registers a rock-the-vote. Succeeds whether or not it passed; check [method rtv_passed] or watch [signal expired].
+## Idempotent per voter: a double type must not let two people end a six-player map.
 func rock_the_vote(
 	voter: StringName,
 	player_count: int,
@@ -432,11 +380,8 @@ func rock_the_vote(
 	return DotResult.success(votes)
 
 
-## Withdraws a rock-the-vote. For a player who leaves, or changes their mind.
-##
-## [b]Called when somebody disconnects, and that matters.[/b] Without it a server
-## whose players trickle away keeps their votes while the threshold falls with the
-## player count — so the map ends on the votes of people who are not there.
+## Withdraws a rock-the-vote, for a player who leaves or changes their mind.
+## Call it on disconnect, or the threshold falls with the player count while the leavers' votes stay.
 func unrock(voter: StringName) -> bool:
 	if not rules.rtv_forgets_leavers:
 		return false
@@ -452,7 +397,6 @@ func has_rocked(voter: StringName) -> bool:
 	return _rocked.has(voter)
 
 
-# --- Reporting -------------------------------------------------------------
 
 ## Time remaining as [code]m:ss[/code], or a word when there is no clock.
 func formatted_remaining() -> String:

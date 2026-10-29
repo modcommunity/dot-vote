@@ -2,34 +2,9 @@
 class_name DotVoteDirector
 extends "res://addons/dot_vote/runtime/dot_vote_director_ballot.gd"
 
-## The node a game adds: the clock, the nominations, the ballot and the change, joined
-## up and driven by one call per tick.
-##
-## [codeblock]
-## var votes := DotVoteDirector.new()
-## votes.rules = DotVoteRules.new()
-## votes.source = my_source
-## votes.player_count_fn = func() -> int: return players.size()
-## add_child(votes)
-## votes.begin(&"lobby")          # what is running now
-##
-## # once per tick
-## votes.advance(delta)
-## [/codeblock]
-##
-## [b]It does not decide what a game is.[/b] Every question that needs to know — how
-## many players there are, whether one is an admin, whether one is a spectator, what
-## their vote is worth — is a [Callable] the host sets. That is not indirection for its
-## own sake: this addon has to serve a dedicated server with sessions, a client
-## mirroring a server's ballot, and a headless test with no players at all, and the
-## first two disagree about every one of those questions.
-##
-## [b]It does not have to change anything either.[/b] A source that cannot apply a
-## result, or an [member auto_apply] of false, gives a director that runs the whole
-## vote and emits [signal change_due] for the host to act on — which is what
-## [DotMapSession] learned the hard way: what happens when a map ends is a game's
-## decision, and a component that made it for them would be fought by every game that
-## wanted anything else.
+## The node a game adds: the clock, the nominations, the ballot and the change, driven by one call per tick (see docs/design.md for setup).
+## It does not decide what a game is: player count, admin, spectator and vote weight are [Callable]s the host sets, since a server, a mirroring client and a headless test disagree about each.
+## It need not change anything either: with [member auto_apply] false it runs the vote and emits [signal change_due].
 
 
 func _ready() -> void:
@@ -88,14 +63,8 @@ func _physics_process(delta: float) -> void:
 	advance(delta)
 
 
-## Stops (true) or starts (false) everything this director counts, for a server that
-## hibernates while it is empty.
-##
-## [b]While hibernating nothing advances[/b] — the clock, a ballot, a countdown, the vote
-## cooldown. An empty room's time is not the map's: a server whose clock ran on through the
-## night handed the first player in the morning a map with a minute left and a ballot
-## already owed. On waking, [member DotVoteRules.wake_restart] starts what is running again
-## from its configured limit ([method restart]); off, it resumes where it froze.
+## Stops (true) or starts (false) everything this director counts, for a server that hibernates while empty.
+## Nothing advances while hibernating, so the first player in does not get a map with a minute left; on waking, [member DotVoteRules.wake_restart] picks restart or resume.
 func set_hibernating(on: bool) -> void:
 	if on == hibernating:
 		return
@@ -114,13 +83,8 @@ func set_hibernating(on: bool) -> void:
 		DotLog.info(CHANNEL, "awake; the clock resumes", {"id": String(_current_id)})
 
 
-## Follows a server's hibernation: [method set_hibernating] on its
-## [code]hibernation_changed(bool)[/code] signal, from the state it is in now.
-##
-## [b]Duck-typed[/b], for this addon's usual reason: it cannot name dot-server's classes.
-## Anything with that signal will do, and [code]is_hibernating()[/code] when it has one says
-## where to start. Returns false for an object with no such signal — a server from before
-## it existed — and nothing is followed. Safe to call twice.
+## Follows a server's hibernation: [method set_hibernating] on its [code]hibernation_changed(bool)[/code] signal, from its current state.
+## Duck-typed (no dot-server names); returns false if the object has no such signal. Safe to call twice.
 func follow_hibernation(server: Object) -> bool:
 	if server == null or not server.has_signal("hibernation_changed"):
 		return false
@@ -193,9 +157,7 @@ func _advance_vote(delta: float) -> void:
 
 
 ## Records the end of a round. Returns whether that ended the current choice.
-##
-## Under [constant DotVoteRules.Trigger.ROUND_END] this is also where a ballot held back
-## by a time or score limit opens — see [member _vote_due_at_round_end].
+## Under [constant DotVoteRules.Trigger.ROUND_END] a ballot held back by a limit opens here.
 func note_round_end() -> bool:
 	# Before the clock hears it: a round ending AFTER the limit ran out is the end of the
 	# round a FINISH_ROUND was holding the change for. The round that ran the limit out —
@@ -235,11 +197,8 @@ func is_waiting_for_round_end() -> bool:
 	return _vote_due_at_round_end
 
 
-## Records the leading score, for [member DotVoteRules.score_limit]. Returns whether
-## that ended the current choice.
-##
-## Call it whenever the leader's score changes — the top player's frags, the leading
-## team's wins. What a score is, is the game's; this only compares it with a number.
+## Records the leading score, for [member DotVoteRules.score_limit]. Returns whether that ended the current choice.
+## What a score is, is the game's; this only compares it with a number.
 func note_score(score: int) -> bool:
 	return clock.note_score(score)
 
@@ -259,12 +218,9 @@ func _on_vote_due(reason: StringName) -> void:
 			_:
 				pass
 
-	# MANUAL hands the host WHEN the scheduled ballot opens: a limit reaching its lead does
-	# nothing here. A rock-the-vote is not the schedule, it is the players asking now, so it
-	# opens as it would under any other trigger. Until 2026-10-10 it was dropped here too,
-	# and every MANUAL host opened the rocked ballot itself from clock.expired. Those copies
-	# stay harmless: vote_due fires before expired, so by then the ballot is open (or
-	# counting down) and their start_vote is refused rather than opening a second.
+	# MANUAL hands the host WHEN the scheduled ballot opens, so a limit reaching its lead does
+	# nothing here. A rock-the-vote is the players asking now and opens as under any trigger;
+	# vote_due fires before expired, so a host's own open from clock.expired is refused, not doubled.
 	if (
 		rules.trigger == DotVoteRules.Trigger.MANUAL
 		and reason != DotVoteClock.REASON_RTV
@@ -346,10 +302,8 @@ func _on_expired(reason: StringName) -> void:
 		_resolve_empty(reason)
 		return
 
-	# Nothing was voted on — RTV_ONLY, the end-of-map vote turned off, or rtv_outcome
-	# END_CURRENT — so the rotation decides. A server whose limit expired and did nothing
-	# at all is the failure this addon exists to prevent. MANUAL is the one trigger left
-	# alone: its host decides for itself.
+	# Nothing was voted on (RTV_ONLY, end-of-map vote off, or rtv_outcome END_CURRENT), so the
+	# rotation decides, or an expired limit would do nothing. MANUAL is left to its host.
 	var unasked := (
 		reason != DotVoteClock.REASON_RTV
 		and not end_vote_enabled()

@@ -2,15 +2,8 @@ class_name DotVoteBanRules
 extends RefCounted
 
 ## Every policy of a voteban, as plain values that an operator's cvars overwrite.
-##
-## [b]Why this is not part of [DotVoteRules].[/b] That is the ballot engine's policy over
-## choices (maps, games); a voteban is a yes or no about one player, shares none of its
-## clocks, and a server that never wants one should not carry fifty-five settings with it.
-## [method bind] registers one cvar per setting and [method refresh] reads them back, so a
-## change at the console applies to the next vote, never to the one in progress.
-##
-## A role is a word the game gives a player through [member DotVoteBans.role_fn] ("player",
-## "staff", "admin", whatever the game has). `*` in a role list is everybody.
+## Not part of [DotVoteRules]: a voteban shares none of its clocks, and a server without one should not carry its settings. [method bind] registers one cvar per setting; a change applies to the next vote.
+## A role is a word from [member DotVoteBans.role_fn]; `*` in a role list is everybody.
 
 const CVARS := {
 	"enabled": ["sv_voteban", "1", "1: players may vote to ban a player. 0: no voteban, not even one a game starts."],

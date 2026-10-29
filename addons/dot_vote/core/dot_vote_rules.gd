@@ -2,30 +2,9 @@
 class_name DotVoteRules
 extends "res://addons/dot_vote/core/dot_vote_rules_settings.gd"
 
-## Every policy decision this addon makes, in one place, and nothing else.
-##
-## [b]The whole addon is here.[/b] [DotVoteBallot], [DotVoteClock] and
-## [DotVoteNominations] hold state and arithmetic; what any of them should [i]do[/i]
-## is one of these fields. That is not tidiness — it is the difference between a
-## server operator changing a number and a server operator forking an addon, and
-## every community that has ever run one of these has wanted a different number.
-##
-## A [DotConfig], so it layers exactly like everything else in the family:
-##
-## [codeblock]
-## exported defaults  <  vote.json / cfg/addons/dot_vote/vote.yml  <  cfg/server/addons/dot_vote/vote.yml  <  DOT_VOTE_*  <  --vote-*
-## [/codeblock]
-##
-## [b]Enum settings are written by name in a file[/b] — [code]method: instant_runoff[/code],
-## not [code]method: 2[/code]. Godot exports them as integers and a config file full of
-## integers is a config file nobody can read or diff; [method apply_dictionary] below
-## translates the names on the way in. An operator should never have to count enum
-## entries in somebody else's source.
-##
-## The defaults are the ones a public server can run untouched: a thirty-minute limit,
-## rock the vote at 60% of at least two players, a six-option ballot with four places
-## kept for nominations, plurality with the earliest-nominated winning a tie, and the
-## winner applied at the end of the round.
+## Every policy decision this addon makes, in one place: [DotVoteBallot], [DotVoteClock] and [DotVoteNominations] hold state, these fields say what they do.
+## A [DotConfig], so it layers as everywhere: defaults < vote.json / vote.yml < server vote.yml < DOT_VOTE_* < --vote-*. Enums are written by name in files ([method apply_dictionary] translates).
+## The defaults run a public server untouched: thirty minutes, rock the vote at 60% of two or more, six options with four kept for nominations, plurality.
 
 
 func env_prefix() -> String:
@@ -37,11 +16,7 @@ func cli_prefix() -> String:
 
 
 ## Enum settings, by property name, so a config file can name them in words.
-##
-## Kept as one table rather than as a method per enum because it is also what
-## [method DotVoteRules.enum_names_for] reports to a settings UI and to
-## [code]describe_lines[/code] — three readers of one list, which is one fewer place
-## for a renamed enum entry to go stale.
+## One table read by [method enum_names_for], the settings UI and [code]describe_lines[/code].
 const ENUMS := {
 	"trigger": Trigger,
 	"fill": Fill,
@@ -61,10 +36,7 @@ const ENUMS := {
 
 
 ## Applies a layer, translating enum names to their values first.
-##
-## [code]method: instant_runoff[/code], [code]METHOD=INSTANT_RUNOFF[/code] and
-## [code]method: 2[/code] all set the same thing. The last one still works because a
-## config written by a program should not have to know the names.
+## Integers still work, for configs written by a program.
 func apply_dictionary(
 	d: Dictionary,
 	layer_name: String = "dict",
@@ -138,10 +110,7 @@ func enum_name(key: String) -> String:
 
 
 ## The warning marks, as seconds, largest first.
-##
-## Parsed rather than stored because [member warn_at_sec] is text — see the note on
-## that field. Anything unreadable is dropped with a warning rather than taking the
-## whole configuration down: one bad entry in a list of three should cost one warning.
+## Parsed from the text field [member warn_at_sec]; an unreadable entry is dropped with a warning, not the whole configuration.
 func warn_marks() -> PackedFloat32Array:
 	var out := PackedFloat32Array()
 
@@ -170,9 +139,7 @@ func warn_marks() -> PackedFloat32Array:
 
 
 ## Whether a countdown second has a cue, per [member cue_countdown_at].
-##
-## Parsed on every ask rather than cached, for the same reason [method warn_marks] is:
-## the field is text and may be changed by a console command at any moment.
+## Parsed on every ask, as the field is text a console command may change.
 func has_countdown_cue(seconds_left: int) -> bool:
 	if cue_countdown == "":
 		return false
@@ -195,11 +162,7 @@ func countdown_cue_id(seconds_left: int) -> String:
 
 
 ## A choice's name as a ballot shows it, marked when it is unofficial.
-##
-## [b]Formatted with [code]replace[/code] rather than [code]%[/code][/b]: a marker an
-## operator typed with a stray [code]%[/code] in it would otherwise fail to format, and
-## GDScript hands back the unformatted string rather than raising — so the ballot would
-## show "*%s" for every custom map with nothing in the log.
+## Uses [code]replace[/code], not [code]%[/code]: a stray [code]%[/code] in the marker would fail to format silently.
 func marked_name(display: String, official: bool) -> String:
 	if official or unofficial_marker == "":
 		return display
@@ -210,21 +173,8 @@ func marked_name(display: String, official: bool) -> String:
 	return display + unofficial_marker
 
 
-## Layers a game's own vote configuration onto these rules, which hold its defaults.
-##
-## [codeblock]
-## code defaults  <  overlay (the running game's metadata)  <  file  <  DOT_VOTE_*  <  --vote-*
-## [/codeblock]
-##
-## [b]This is [method DotConfig.load_layered] with one layer in front of it, not a new
-## loader.[/b] The overlay is what an operator writes beside the game — a delivered
-## game's [code]game.yml[/code] — and the file is what an operator writes beside the
-## server. Both are optional.
-##
-## [b]A result that does not validate is refused as a whole[/b], and the rules are put
-## back to the defaults they held: a vote whose rules contradict each other is a vote
-## that never opens, and a server that keeps its own tested defaults and logs why is
-## better than one that half-applies a broken file.
+## Layers a game's own vote configuration onto these rules: code defaults < overlay (game metadata) < file < DOT_VOTE_* < --vote-*.
+## A result that does not validate is refused as a whole and the defaults are put back, since rules that contradict each other mean a vote that never opens.
 func layer_over_defaults(file_path: String, overlay: Dictionary = {}) -> DotResult:
 	var defaults := to_dictionary()
 
@@ -268,18 +218,7 @@ func load_cfg(file_name: String = "vote.yml", legacy_dir: String = "res://cfg") 
 
 
 ## Takes out what a host cannot drive, and says what it took.
-##
-## [b]Every setting here layers from a file an operator writes[/b], and some of them only
-## mean something if the host feeds the clock: a round trigger or limit needs
-## [method DotVoteDirector.note_round_end], a score one [method DotVoteDirector.note_score].
-## A game that calls neither and is handed `trigger: round_end` validates perfectly and
-## then waits for a round end that never comes — and with the map's own clock handed to
-## the vote, the map never ends. So a host that knows what it feeds says so here, after
-## layering, and logs what came back at ERROR.
-##
-## Round and score triggers fall back to [constant Trigger.TIME_LIMIT]; the limits to 0;
-## and applying at the end of a round, with no rounds, to [constant Apply.IMMEDIATE] —
-## otherwise a won rock-the-vote under a vote with no clock would be pending for ever.
+## A round or score trigger the host never feeds would wait for ever. Those fall back to [constant Trigger.TIME_LIMIT], the limits to 0, and end-of-round apply to [constant Apply.IMMEDIATE]; ERROR logs the result.
 func drop_unfed(feeds_rounds: bool, feeds_score: bool) -> PackedStringArray:
 	var dropped := PackedStringArray()
 

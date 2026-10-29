@@ -2,15 +2,8 @@ class_name DotVoteNominations
 extends RefCounted
 
 ## What players have asked to be on the next ballot.
-##
-## Held separately from the ballot because they outlive it: nominations accumulate for
-## the whole of a map and are consumed the moment a vote opens. Keeping them on the
-## ballot object would mean losing every one of them each time a vote failed for want
-## of a quorum.
-##
-## [b]Order is preserved and is load-bearing.[/b] It is what fills the reserved places
-## in order, and it is the tie-break a player watching can predict: the first thing
-## nominated wins a tie, which everybody can see coming.
+## Held apart from the ballot because they outlive it: a vote that fails for want of a quorum must not lose them.
+## Order is load-bearing: it fills the reserved places and is the tie-break a watching player can predict.
 
 const CHANNEL := "vote.nominations"
 
@@ -23,11 +16,7 @@ const REASON_CLEARED := &"cleared"
 const REASON_ADMIN := &"admin"
 
 ## A nomination came off the list, and why.
-##
-## [b]Every path that removes one emits it[/b] — withdrawn, replaced by the same
-## player's next, taken onto a ballot, cleared by a new map, removed by an admin. A menu
-## that greys out what is already nominated needs to hear about all of them, and one
-## that heard about only some would keep an entry greyed out for the rest of the map.
+## Every removal path emits it, so a menu that greys out nominated entries never keeps one greyed for the rest of the map.
 signal removed(voter: StringName, id: StringName, reason: StringName)
 
 ## One nomination: [code]{id, voter, admin}[/code], in the order they arrived.
@@ -42,15 +31,8 @@ static func of(p_rules: DotVoteRules) -> DotVoteNominations:
 	return nominations
 
 
-## Records a nomination.
-##
-## Caps and duplicates only — whether the thing is currently running, or on cooldown,
-## or exists at all, is decided by [DotVoteDirector], which is the only object that
-## knows. Splitting it this way keeps this class testable with no source at all.
-##
-## [param forced] is an admin putting something on the next ballot outright: it ignores
-## every cap and the off switch, and [method forced_ids] keeps it out of the places
-## reserved for players, so forcing one map on does not cost the players a nomination.
+## Records a nomination. Caps and duplicates only; whether the thing exists, is running or on cooldown is [DotVoteDirector]'s call.
+## [param forced] is an admin putting something on outright: it ignores caps and the off switch, and [method forced_ids] keeps it out of the player-reserved places.
 func add(
 	voter: StringName,
 	id: StringName,
@@ -143,13 +125,8 @@ func remove_id(id: StringName, reason: StringName = REASON_ADMIN) -> int:
 	return count
 
 
-## Drops everything one player nominated. For a player who disconnects.
-##
-## Whether a host calls this is a real choice and this addon does not make it: a
-## nomination is a request for the server, not for the person, and a player who
-## nominated a map and then crashed usually still wants it played. [DotVoteDirector]
-## leaves nominations alone on disconnect and withdraws rock-the-votes, which is the
-## asymmetry the two mechanisms actually have.
+## Drops everything one player nominated, for a disconnect.
+## [DotVoteDirector] does not call it on disconnect (a nomination is a request for the server) but does withdraw rock-the-votes.
 func remove_voter(voter: StringName, reason: StringName = REASON_LEFT) -> int:
 	var count := 0
 
@@ -211,9 +188,7 @@ func ordered_ids() -> Array[StringName]:
 
 
 ## id -> how many people nominated it, for [constant DotVoteRules.Fill.MOST_NOMINATED].
-##
-## Meaningful only because seconding is allowed — see
-## [member DotVoteRules.nomination_seconding].
+## Meaningful only with [member DotVoteRules.nomination_seconding].
 func counts() -> Dictionary:
 	var out := {}
 
@@ -224,10 +199,8 @@ func counts() -> Dictionary:
 	return out
 
 
-## Where this first appeared, or a large number when it was never nominated.
-##
-## The large number rather than -1 is what makes it usable directly as a sort key:
-## anything nominated sorts ahead of anything that was not, with no branch.
+## Where this first appeared, or a large number when never nominated.
+## The large number makes it a sort key with no branch.
 func first_index(id: StringName) -> int:
 	var ordered := ordered_ids()
 	var index := ordered.find(id)

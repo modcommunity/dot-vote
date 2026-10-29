@@ -2,32 +2,8 @@ class_name DotVoteGameSource
 extends DotVoteSource
 
 ## Votes over the games a [code]DotGameManager[/code] can run.
-##
-## [b]It names no dot-server class, on purpose.[/b] A script that mentions a
-## [code]class_name[/code] its project does not have fails to parse and takes every
-## script referencing it down with it — so this addon would be uninstallable in any
-## project without dot-server if this file said [code]DotGameManager[/code] once. The
-## manager arrives as an [Object] and is duck-typed, which is how dot-server itself
-## finds dot-cloud and dot-auth, and how dot-map finds its content client.
-##
-## [codeblock]
-## var source := DotVoteGameSource.of(server.games)
-## director.source = source
-## [/codeblock]
-##
-## [b]Per-game settings live in the descriptor's metadata[/b], under a
-## [code]vote[/code] key, so an operator writes a game's time limit beside the game
-## rather than in a table of ids somewhere else:
-##
-## [codeblock]
-## # content/arena/game.yml
-## metadata:
-##   vote:
-##     time_limit_sec: 2400     # this one runs for forty minutes
-##     weight: 2.0              # and comes up twice as often
-##     nominate_only: false
-##     group: shooters
-## [/codeblock]
+## It names no dot-server class, so the addon installs without dot-server: the manager arrives as an [Object], duck-typed.
+## Per-game settings sit in the descriptor's metadata under a [code]vote[/code] key ([code]time_limit_sec[/code], [code]weight[/code], [code]nominate_only[/code], [code]group[/code]).
 
 const CHANNEL := "vote.games"
 
@@ -38,15 +14,11 @@ const META_KEY := "vote"
 var manager: Object = null
 
 ## Game ids never offered, whatever the manager says.
-##
-## What a lobby is. A server whose home screen is a game in the list would otherwise
-## offer "vote to go back to the menu", which is not a game anybody votes for.
+## For a lobby, so a server does not offer "vote to go back to the menu".
 var excluded: Array[StringName] = []
 
 ## Game ids in the order [method choices] lists them, the others after, in manager order.
-##
-## What a fixed cycle (a `mode: cycle` rotation) is: the director's "next in rotation" walks
-## the source's order, so ordering the source is all it takes, and nothing here knows why.
+## What a fixed cycle is: the director's "next in rotation" walks the source's order.
 var order: Array[StringName] = []
 
 
@@ -65,15 +37,8 @@ static func from_registry() -> DotVoteGameSource:
 
 
 ## What the RUNNING game's descriptor carries under [param key], or an empty dictionary.
-##
-## For a game that configures its own vote beside itself. A delivered game's
-## [code]game.yml[/code] becomes a descriptor, and a module running inside that game
-## has no other way to read what the operator wrote there — it did not load the file,
-## and naming the host's config class would fail to parse in every project without it.
-## Duck-typed through [DotRegistry], like [method from_registry].
-##
-## [b]A copy[/b], for the family's aliasing reason: a caller that layers it and then
-## writes into it would otherwise be writing into the descriptor.
+## For a module that must read its own game's [code]game.yml[/code] without naming the host's config class; duck-typed through [DotRegistry].
+## A copy, so a caller that layers it does not write into the descriptor.
 static func running_game_metadata(key: String) -> Dictionary:
 	var manager: Object = DotRegistry.get_service(&"dot_game_manager")
 
@@ -100,11 +65,7 @@ func source_name() -> String:
 
 
 ## Whether the object handed over is actually a game manager.
-##
-## [b]Checked, and said out loud when it is not.[/b] Duck typing's failure mode is a
-## source that quietly offers nothing, which is indistinguishable from a server with
-## no games — the exact shape of the four call sites that all found a null cloud client
-## and none of which errored.
+## Said out loud when not, since a quietly empty source looks like a server with no games.
 func is_usable() -> bool:
 	return (
 		manager != null

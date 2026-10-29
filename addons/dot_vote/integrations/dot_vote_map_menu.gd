@@ -1,60 +1,9 @@
 class_name DotVoteMapMenu
 extends RefCounted
 
-## The server half of the map menu every game has on M: `mapmenu` lists the maps to a
-## player, and `mapmenu <id>` changes to one for a player holding the flag the owner named,
-## or starts a vote for it for anybody else.
-##
-## [codeblock]
-## # Installed by DotVoteCommands.bind with the rest; a game only says how to change NOW:
-## commands.map_menu.change_fn = func(id: StringName) -> DotResult: return world.change_map_now(id)
-## commands.map_menu.rows_fn = func(rows: Array) -> Array: return decorate(rows)   # optional
-## [/codeblock]
-##
-## [b]Why the menu's server half is here.[/b] Every game in the family already has a
-## [DotVoteDirector] over a source that knows its maps (or courses, layouts, routes, houses)
-## and how to apply one, and installs [DotVoteCommands] on its module. The vote fallback is
-## the director's own nominate and rock-the-vote. Putting the menu next to them gives every
-## game the server half with no wiring at all, and the one thing a game may want to say, how
-## to change immediately rather than at the end of the round, is one callable.
-##
-## [b]The flag is the owner's.[/b] `sv_map_menu_flag` names it, `generic` by default: the
-## flag every staff group holds from moderator up, so "moderator or above" without this addon
-## having an opinion about what a moderator is. `changemap` narrows it to admins; `anyone`
-## lets anybody change the map (a private server among friends, or `./game.sh online` on the
-## player's own machine). Read on every request, so a change at the console applies to the
-## next M press.
-##
-## [b]It fails closed.[/b] An empty value, a cvar that was never registered, and a value that
-## names nothing all mean staff only, never "anybody". Until 2026-10-14 an empty value meant
-## anybody, which made a blanked config line, or a panel variable left empty, a server where
-## every guest changed the map with one key. Letting everybody in is a word an owner writes
-## ([constant ANYONE]), not the absence of one.
-##
-## [b]Everybody else gets a vote of the humans here.[/b] A choice from a player without the
-## flag nominates the map and rocks the vote only when at least `sv_map_menu_vote_min` humans
-## (2 by default, never fewer) are playing, and never in a way that could pass without a
-## majority of them: one player on an empty server rocking the vote is not "the server
-## agreed". Humans are the server's playing sessions; bots are not sessions in this family,
-## so they never count (a game that keeps its own count says so through [member humans_fn]).
-##
-## [b]Alone, a player may change it.[/b] `sv_map_menu_alone` (1 by default): the only human
-## on the server changes the map directly, because there is nobody to ask and nobody to harm,
-## and a lone runner on an empty timer server should not wait out a clock. The moment a
-## second human is playing, it is a vote again. 0 makes it staff only plus votes.
-##
-## [b]The player running the server is its owner.[/b] A session with no transport behind it
-## ([code]DotClientSession.local[/code]) is the listen host's own player, in the same process
-## as the server, and has the change whatever the flag says. A remote client never is one: it
-## arrives through the listener. (Not "connected from 127.0.0.1": behind a TLS proxy every
-## browser on a public server arrives from loopback.)
-##
-## [b]The client reads a notice, not chat.[/b] The answer is a notice on the `map_menu` topic
-## with the list in `data` (dot-server's notice is the one message a server can send the
-## client application whatever game it shows), and the result of a choice is a notice too and
-## a reply line, so a client older than the menu still reads what happened in its chat.
-## Nothing here names dot-server: the context, the session and the server are duck-typed, the
-## server is found as `dot_server` in [DotRegistry], and the notice script is loaded by path.
+## The server half of the map menu every game has on M: `mapmenu` lists the maps, and `mapmenu <id>` changes to one for a holder of the owner's flag or starts a vote for anybody else. Installed by DotVoteCommands.bind; a game sets only [code]change_fn[/code] and optionally [code]rows_fn[/code].
+## The flag is `sv_map_menu_flag` (default `generic`, `changemap` for admins, `anyone` for open servers), read on every request. It fails closed: an empty or unregistered value means staff only, never anybody. Others nominate and rock the vote only with `sv_map_menu_vote_min` humans (2, never fewer) and never on less than a majority of them. `sv_map_menu_alone` (1): the only human changes it directly.
+## A session with no transport ([code]DotClientSession.local[/code]) is the listen host and always has the change; "from 127.0.0.1" is wrong behind a TLS proxy. Answers are `map_menu` notices plus a reply line, so older clients still read the result.
 
 const CHANNEL := "vote.map_menu"
 
@@ -169,10 +118,7 @@ static func _bind_cvar(host: Object, cvar_name: String, default_value: String, h
 	return null
 
 
-## `+sv_map_menu_flag anyone` on the server's command line, applied now. The console runs its
-## command line at boot, before a game's module (and so this) has registered anything, so a
-## value given there for one of these was dropped as an unknown command. `./game.sh online`
-## (play.sh) gives its server, which only this machine can reach, `anyone` this way.
+## `+sv_map_menu_flag anyone` on the command line, applied now: the console runs its command line before a game's module registers anything, so these were dropped as unknown commands.
 static func _from_command_line(console: Variant, made: Object, cvar_name: String) -> void:
 	if not (console is Object) or not (console as Object).has_method("command_line_statements") \
 			or not made.has_method("set_value"):
@@ -344,11 +290,9 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 	else:
 		parts.append("Could not nominate %s: %s" % [label, nominated.error.message])
 
-	# [b]A vote is the humans here agreeing, and one player is not that.[/b] The director's
-	# own rock-the-vote counts whatever its game counts (bots, in some) against whatever
-	# minimum its rules say (1 by default), so on its own a lone guest rocked the vote, won
-	# the ballot alone and changed the map. Here: at least min_voters() humans, and never a
-	# rock that would pass on fewer than a majority of them.
+	# A vote is the humans here agreeing: the director's own rock-the-vote counts bots and
+	# a minimum of 1, so a lone guest could win a ballot. Require min_voters() humans and
+	# a majority of them.
 	var here := humans()
 	if here < 0:
 		here = director.player_count()
@@ -402,13 +346,7 @@ func _change_now(ctx: Object, id: StringName, label: String) -> Dictionary:
 
 
 ## Why [param id] is refused when the source does not offer it now.
-##
-## [b]Not "there is no map called".[/b] A list a player opened before a change can name an id
-## the source offered then and does not now: arena offers a team mode on a map with team
-## spawns, and not after a change to one without. Calling that a missing map sent a reader
-## looking for a typo. A source that knows the real reason says it through
-## `unavailable_reason(id) -> String` (duck-typed, empty for "no idea"); otherwise the text
-## says the list may be out of date, which it is whenever the id was once on it.
+## A list opened before a change can name an id no longer offered (a team mode without team spawns); a source may say why via `unavailable_reason(id) -> String`, else the text says the list may be out of date.
 func unavailable_text(id: StringName) -> String:
 	var source := commands.director.source if commands != null and commands.director != null else null
 	if source != null and source.has_method(&"unavailable_reason"):

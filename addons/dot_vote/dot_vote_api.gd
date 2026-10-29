@@ -1,10 +1,7 @@
 extends RefCounted
 
-## dot-vote's API level. The rule for bumping it is on [DotAddonApi].
-##
-## LEVEL rises by one for anything a game could call that did not exist before. OLDEST is
-## raised to LEVEL when something a game could have called is removed or changes meaning,
-## because every pack built before that no longer compiles against this addon.
+## dot-vote's API level; the bumping rule is on [DotAddonApi].
+## LEVEL rises for anything new a game could call; OLDEST is raised when something callable is removed or changes meaning.
 
 # 1: everything before this file existed (an absent file reads as 1).
 # 2: DotVoteListSource.entries_fn and refresh(), DotVoteSource.before_ballot(); a passed

@@ -1,15 +1,8 @@
 class_name DotVoteResult
 extends RefCounted
 
-## What a ballot decided, and how.
-##
-## [b]The "how" is not decoration.[/b] A vote that announces a winner and nothing else
-## is a vote players argue about: the tally said 4–4, something won, and the only
-## available explanation is that the server cheated. Every field here exists so the
-## announcement can say [i]why[/i] — "Arena wins (tie, nominated first)" — which is
-## the difference between a rule and a coin flip as far as anybody watching can tell.
-##
-## Returned by [method DotVoteBallot.resolve]. Never null.
+## What a ballot decided, and how; returned by [method DotVoteBallot.resolve], never null.
+## The "how" lets the announcement say why ("Arena wins (tie, nominated first)"), the difference between a rule and a coin flip to anyone watching.
 
 ## What the ballot came to.
 enum Outcome {
@@ -55,10 +48,7 @@ var eligible: int = 0
 ## [member DotVoteRules.include_abstain].
 var abstained: int = 0
 
-## Whether the ballot was decided by a tie-break, and by which one.
-##
-## The empty string when nothing was tied, which is the common case and reads better
-## in an announcement than "tie_break: none".
+## Whether the ballot was decided by a tie-break, and by which one; empty when nothing was tied.
 var tie_break: String = ""
 
 ## The ids that were tied, when one was.
@@ -82,18 +72,13 @@ func turnout() -> float:
 
 
 ## Whether anything actually changes as a result of this.
-##
-## Extend, keep, no-quorum-with-KEEP and empty all mean "carry on", and a host that
-## branched on [member winner_id] being set would treat three of those as a change to
-## nothing and unload the running game.
+## Extend, keep, no-quorum-with-KEEP and empty all mean "carry on"; branching on [member winner_id] would unload the running game.
 func changes_choice() -> bool:
 	return outcome == Outcome.WINNER and winner_id != &""
 
 
-## The counts as an ordered list of [code][id, votes][/code], most first.
-##
-## For a HUD or a chat line. Ties keep ballot order, so two renderings of one tally
-## never disagree about which of two equal options comes first.
+## The counts as an ordered list of [code][id, votes][/code], most first, for a HUD or chat line.
+## Ties keep ballot order so two renderings never disagree.
 func ordered() -> Array:
 	var order := {}
 	var i := 0

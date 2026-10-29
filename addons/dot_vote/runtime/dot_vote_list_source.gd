@@ -2,20 +2,8 @@ class_name DotVoteListSource
 extends DotVoteSource
 
 ## A source built from an explicit list, optionally loaded from JSON.
-##
-## What a game uses when the things being voted for are the game's own business rather
-## than dot-server's or dot-map's: modes, mutators, difficulties, team sizes. Also what
-## every test in this addon uses, which is the more important reason it exists — a
-## suite that can only run against a real [DotGameManager] is a suite that mostly does
-## not run.
-##
-## [codeblock]
-## var source := DotVoteListSource.new()
-## source.add(DotVoteChoice.of(&"classic", "Classic"))
-## source.add(DotVoteChoice.of(&"frenzy", "Frenzy"))
-## source.apply_fn = func(id: StringName) -> DotResult:
-##     return game.set_mode(id)
-## [/codeblock]
+## For choices that are the game's own business (modes, mutators, difficulties), and what every test here uses so it need not run against a real [DotGameManager].
+## Typical use: [code]source.add(DotVoteChoice.of(&"classic", "Classic"))[/code], then set [member apply_fn].
 
 const CHANNEL := "vote.list"
 
@@ -25,11 +13,8 @@ var entries: Array[DotVoteChoice] = []
 ## What is running now. Set it yourself, or let [method apply] set it.
 var current: StringName = &""
 
-## What "play this" does. Takes a [StringName], returns a [DotResult]. May be a
-## coroutine.
-##
-## Unset means this source only lists, and [DotVoteDirector] will emit
-## [signal DotVoteDirector.change_due] for the host to act on.
+## What "play this" does: takes a [StringName], returns a [DotResult], may be a coroutine.
+## Unset means this source only lists, and [DotVoteDirector] emits [signal DotVoteDirector.change_due].
 var apply_fn: Callable = Callable()
 
 ## A name for logs.
@@ -38,15 +23,8 @@ var label: String = "list"
 ## The file [method load_json] last read, so [method reload] can read it again.
 var loaded_from: String = ""
 
-## [code]func() -> Array[/code]: the list as the host has it NOW, re-read into [member entries]
-## when a choice begins and before every ballot (see [method before_ballot]). Each item is a
-## [DotVoteChoice], an [code][id, name][/code] pair, or a bare id.
-##
-## [b]For a catalogue that grows after the director is built[/b] — maps or courses
-## delivered after boot. Copied into [member entries] once, such a list held only what
-## existed at setup, a list of one never opened a ballot, and every game had to remember
-## to refresh it by hand after each delivery. Unset, [member entries] is the list, as it
-## always was.
+## [code]func() -> Array[/code]: the list as the host has it NOW, re-read into [member entries] when a choice begins and before every ballot.
+## Each item is a [DotVoteChoice], an [code][id, name][/code] pair, or a bare id. For a catalogue that grows after the director is built; unset, [member entries] is the list.
 var entries_fn: Callable = Callable()
 
 ## The index [method follow_content] reads, or null.
@@ -55,11 +33,8 @@ var content_index: DotContentIndex = null
 ## The [code]map_kind[/code]s [method follow_content] accepts; "*" is every kind, empty none.
 var content_kinds: PackedStringArray = PackedStringArray()
 
-## [code]func(id: StringName) -> bool[/code]: whether the server's map rotation (maps.yml) plays
-## [param id]. Applied to [b]every[/b] choice this source offers, the merged
-## [method follow_content] maps included, so the ballot, nominations and the next-map draw
-## (all of which read [method choices]) agree. A pack map is installed and loadable by the map
-## command; it is just not on the rotation unless the file lists it. Unset, every choice rotates.
+## [code]func(id: StringName) -> bool[/code]: whether the server's map rotation (maps.yml) plays [param id].
+## Applied to every choice, merged [method follow_content] maps included, so ballot, nominations and next-map draw agree. Unset, every choice rotates.
 var in_rotation_fn: Callable = Callable()
 
 ## [code]func() -> Array[/code]: ids in the rotation's written order. Choices named there come
@@ -152,11 +127,8 @@ func _through_rotation(all: Array[DotVoteChoice]) -> Array[DotVoteChoice]:
 	return out
 
 
-## Merges the maps subscribed packs provide into this list, for the index's current session
-## only. Opt-in: a source that never calls this offers exactly its own list. An empty
-## [param accepted_kinds] accepts none and "*" every [code]map_kind[/code], the same as
-## [code]DotMapCatalogue.follow_content[/code]. The index is dot-core's, so this adds no
-## dependency on dot-map.
+## Merges the maps subscribed packs provide into this list, for the index's current session only; opt-in.
+## Empty [param accepted_kinds] accepts none and "*" every [code]map_kind[/code], as [code]DotMapCatalogue.follow_content[/code]. The index is dot-core's, so no dot-map dependency.
 func follow_content(index: DotContentIndex, accepted_kinds: PackedStringArray = PackedStringArray()) -> void:
 	content_index = index
 	content_kinds = accepted_kinds
@@ -297,10 +269,7 @@ func apply(id: StringName) -> DotResult:
 
 
 ## Reads a list of choices from a JSON file.
-##
-## The format is an array of the dictionaries [method DotVoteChoice.to_dictionary]
-## produces, or an object with a [code]"choices"[/code] key holding one — so a file
-## written by hand can carry a comment field beside the list without this refusing it.
+## An array of [method DotVoteChoice.to_dictionary] dictionaries, or an object with a [code]"choices"[/code] key so a hand-written file can carry other fields.
 func load_json(path: String) -> DotResult:
 	if not FileAccess.file_exists(path):
 		return DotResult.fail(

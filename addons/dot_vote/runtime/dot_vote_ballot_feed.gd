@@ -1,41 +1,16 @@
 class_name DotVoteBallotFeed
 extends RefCounted
 
-## Sends a [DotVoteBallotView] whenever the ballot it describes changes, and nothing
-## otherwise.
-##
-## [codeblock]
-## feed = DotVoteBallotFeed.of(director, func(state: Dictionary) -> void:
-##     server.broadcast_notice(DotNotice.make(&"", "", -1.0, &"map_ballot", state)))
-## feed.title = "Vote for the next map"
-## feed.command = "votefor"
-## # every tick, after director.advance
-## feed.poll()
-## [/codeblock]
-##
-## [b]Polled rather than driven by the director's signals[/b], for the reason dot-server-
-## deploy's HUD line is: not everything that changes a ballot emits. A voter who leaves is
-## withdrawn by [method DotVoteDirector.forget_voter] without a signal, and a feed that only
-## listened to [signal DotVoteDirector.vote_cast] would keep their avatar on the board until
-## somebody else voted. One snapshot a tick is a few options and a few dozen voters, compared
-## by hash; it is sent only when it differs.
-##
-## [b]The one signal it does take is [signal DotVoteDirector.vote_closed][/b], because the
-## result — what won — is gone from the director by the next poll.
-##
-## Several feeds can run in one process — the game vote and a game's map vote — and each
-## carries its own [member title] and [member command], which is what lets a client draw two
-## ballots at once and send each choice to the vote it belongs to.
+## Sends a [DotVoteBallotView] whenever the ballot it describes changes, and nothing otherwise; call [method poll] every tick after director.advance.
+## Polled, not signal-driven: a voter who leaves is withdrawn by [method DotVoteDirector.forget_voter] without a signal. It does take [signal DotVoteDirector.vote_closed], since the result is gone by the next poll.
+## Several feeds can run at once, each with its own [member title] and [member command], so a client can draw two ballots and answer each.
 
 ## What [method poll] sends: one [Dictionary], a [DotVoteBallotView] state with
 ## [member title] and [member command] added.
 var send_fn: Callable = Callable()
 
 ## Who a voter is, for the avatars. See [method DotVoteBallotView.state_of].
-##
-## Also handed to [member DotVoteDirector.people_fn] when the director has none, so the
-## chat lines name the same player the ballot draws. Every host already set this one, and
-## a host setting it twice is the second place to forget it. Unset, the director's is used.
+## Also handed to [member DotVoteDirector.people_fn] when the director has none, so chat names the same player the ballot draws.
 var people_fn: Callable = Callable():
 	set(value):
 		people_fn = value

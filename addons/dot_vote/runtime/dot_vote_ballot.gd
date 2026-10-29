@@ -2,27 +2,8 @@ class_name DotVoteBallot
 extends RefCounted
 
 ## The open ballot: what is on it, who voted for what, and who won.
-##
-## [b]One voter, one ballot, changeable until it closes[/b] — changeable because the
-## alternative is a player who misclicked being stuck with it, and because being able
-## to change your mind is what makes a live tally worth showing. Off, if a server
-## wants it off: [member DotVoteRules.changeable_until_close].
-##
-## A ballot is an ordered list of ids, which is the one shape that serves every
-## counting method this addon offers. Plurality reads the first entry, approval reads
-## all of them, and an instant runoff reads them in order — so a client can always
-## send the same thing and a server can change how it counts without changing the
-## wire.
-##
-## [codeblock]
-## ballot.begin(options, players.size())
-## ballot.cast_vote(&"player_7", [&"arena"] as Array[StringName])
-## var result := ballot.resolve()
-## [/codeblock]
-##
-## Nothing here draws a menu, sends a chat message or counts down. A ballot is a tally
-## and a rule; presenting it is the game's job, and [DotVoteDirector] is where the two
-## are joined.
+## A ballot is an ordered list of ids, the one shape every counting method reads, so the wire never changes with the method.
+## Nothing here draws or counts down; [DotVoteDirector] joins it to players and a clock.
 
 # No log channel: a tally and a rule. DotVoteDirector, which joins it to players and a
 # clock, logs a vote opening and its result; a refused cast goes back to the voter.
@@ -34,9 +15,7 @@ const EXTEND := &"__extend__"
 const KEEP := &"__keep__"
 
 ## The pseudo-option for "I have no opinion": recorded, counted toward nothing.
-##
-## Stored as an empty ballot, which is the one shape every counting method here already
-## skips — so an abstention cannot leak into a tally through a method that forgot it.
+## Stored as an empty ballot, which every counting method already skips.
 const ABSTAIN := &"__abstain__"
 
 signal opened(options: Array)
@@ -68,12 +47,8 @@ var history: DotVoteHistory = null
 ## Consulted only by [constant DotVoteRules.TieBreak.NOMINATION_ORDER]. Optional.
 var nominations: DotVoteNominations = null
 
-## Whether "extend" may be offered at all right now. Set by [DotVoteDirector] from the
-## clock before a ballot opens.
-##
-## [b]A ballot must not offer what cannot happen.[/b] With the extensions used up,
-## "extend" on the ballot is an option that, if it wins, does nothing — and the players
-## who voted for it are told so after the fact.
+## Whether "extend" may be offered right now, set by [DotVoteDirector] from the clock.
+## A ballot must not offer an option that does nothing if it wins.
 var extend_available: bool = true
 
 ## Whether this ballot was opened early — by rocking the vote — rather than by a limit
@@ -88,7 +63,6 @@ static func of(p_rules: DotVoteRules) -> DotVoteBallot:
 	return ballot
 
 
-# --- Opening ---------------------------------------------------------------
 
 ## Opens a ballot over [param p_options].
 func begin(p_options: Array[DotVoteChoice], p_eligible: int) -> DotResult:
@@ -118,10 +92,7 @@ func begin(p_options: Array[DotVoteChoice], p_eligible: int) -> DotResult:
 
 
 ## Re-opens over the tied or leading options, keeping the runoff count.
-##
-## [b]The ballots are cleared and that is the point.[/b] A runoff asks a different
-## question — "of these two, which" — and carrying the first round's votes forward
-## would answer the old one.
+## The ballots are cleared: a runoff asks a different question.
 func begin_runoff(ids: Array[StringName]) -> DotResult:
 	var kept: Array[DotVoteChoice] = []
 
@@ -179,12 +150,8 @@ func has_abstain() -> bool:
 	return rules != null and rules.include_abstain
 
 
-## Every votable id, in the order a player sees them — which is what a number typed
-## into chat indexes.
-##
-## The pseudo-options go last unless [member DotVoteRules.pseudo_options_first] moves
-## them. Either way this is presentation: counting and tie-breaking use
-## [method countable_ids], which never moves them.
+## Every votable id, in the order a player sees them (what a number typed into chat indexes).
+## Presentation only: counting and tie-breaking use [method countable_ids].
 func option_ids() -> Array[StringName]:
 	var out: Array[StringName] = []
 	var pseudo := _pseudo_ids()
@@ -201,13 +168,8 @@ func option_ids() -> Array[StringName]:
 	return out
 
 
-## Every id a vote can count toward, choices first — the order ties are broken in.
-##
-## [b]The pseudo-options go last here whatever the ballot shows[/b], and that is not a
-## detail. [constant DotVoteRules.TieBreak.BALLOT_ORDER] resolves toward the front, and a
-## tie-break that handed ties to "keep things as they are" because an operator moved
-## "extend" to the top of a menu would be a server that never changes. Abstaining is
-## not here at all: it is a vote for nothing.
+## Every id a vote can count toward, choices first, the order ties are broken in.
+## The pseudo-options stay last whatever the ballot shows, or moving "extend" up a menu would hand it every tie.
 func countable_ids() -> Array[StringName]:
 	var out: Array[StringName] = []
 
@@ -250,14 +212,9 @@ func has_option(id: StringName) -> bool:
 	return option_ids().has(id)
 
 
-# --- Voting ----------------------------------------------------------------
 
 ## Records a ballot. [param choices] is in preference order.
-##
-## [param weight] is what an operator's "an admin's vote counts double" turns into.
-## 1.0 for everybody is the default and the sane configuration; the hook exists
-## because premium servers in this genre have wanted it for twenty years and the
-## alternative is a fork.
+## [param weight] is what "an admin's vote counts double" turns into; 1.0 is the default.
 func cast_vote(
 	voter: StringName,
 	choices: Array[StringName],
@@ -306,10 +263,8 @@ func cast_vote(
 		DotVoteRules.Method.INSTANT_RUNOFF:
 			pass
 		_:
-			# A ranked ballot sent to a server counting first preferences is not an
-			# error — it is a client that does not know how this server counts, and the
-			# honest reading of it is its first preference. Refusing it would make a
-			# generic client unusable against half the configurations here.
+			# A ranked ballot sent to a server counting first preferences is read as its first
+			# preference, not refused: the client does not know how this server counts.
 			legal = legal.slice(0, 1)
 
 	ballots[voter] = legal
@@ -371,7 +326,6 @@ static func _as_strings(ids: Array[StringName]) -> PackedStringArray:
 	return out
 
 
-# --- Counting --------------------------------------------------------------
 
 ## Current counts by id, including zero-vote options so a tally renders in full.
 ##
@@ -497,10 +451,8 @@ func _resolve_majority(result: DotVoteResult, counts: Dictionary) -> void:
 	var ordered := _ordered_ids_by_count(counts)
 	var take := mini(rules.runoff_options, ordered.size())
 
-	# Anything tied with the last place that made it goes through too. Cutting a tie at
-	# the line by ballot order would put one of two equal options in the runoff and
-	# drop the other for being lower on a menu — which is the long-standing map-choosers'
-	# rule as well: "more than two for a revote if they are tied".
+	# Anything tied with the last place that made it goes through too, rather than
+	# cutting the tie by ballot order.
 	while take < ordered.size() and is_equal_approx(
 		float(counts.get(ordered[take], 0.0)), float(counts.get(ordered[take - 1], 0.0))
 	):
@@ -514,11 +466,7 @@ func _resolve_majority(result: DotVoteResult, counts: Dictionary) -> void:
 
 
 ## Eliminates the last-placed choice until something has a majority.
-##
-## [b]Ties for last are broken toward elimination in reverse ballot order.[/b] Some
-## rule is needed and every rule is arbitrary; this one is at least the mirror of the
-## tie-break that decides the winner, so the two never disagree about which of two
-## equal options this server considers "first".
+## Ties for last are eliminated in reverse ballot order, the mirror of the winner tie-break.
 func _resolve_instant_runoff(result: DotVoteResult) -> void:
 	var remaining := countable_ids()
 	var counts := {}
@@ -584,7 +532,6 @@ func _last_placed(counts: Dictionary, remaining: Array[StringName]) -> StringNam
 	return loser
 
 
-# --- Deciding --------------------------------------------------------------
 
 ## Turns a winning id into an outcome, applying the extend and keep rules.
 func _settle(result: DotVoteResult, winner_id: StringName, counts: Dictionary) -> void:
@@ -638,9 +585,7 @@ static func _format_votes(votes: float) -> String:
 
 
 ## The leading id, with ties broken by the configured rule.
-##
-## Records the tie-break on [param result] when one was used, so the announcement can
-## say why — see [DotVoteResult].
+## Records the tie-break on [param result] so the announcement can say why.
 func _leader(counts: Dictionary, result: DotVoteResult) -> StringName:
 	var best := -INF
 	var tied: Array[StringName] = []
@@ -660,16 +605,9 @@ func _leader(counts: Dictionary, result: DotVoteResult) -> StringName:
 	if tied.is_empty():
 		return &""
 
-	# [b]The two halves of extend_needs_majority, and both of them are here.[/b] With
-	# it on, extend leading on equal votes is not extend winning: the people who wanted
-	# something new are the ones who lose by staying, and a server that ties toward the
-	# status quo never changes anything. With it off, the incumbent keeps a tie — at
-	# least as many people want to stay as want to go.
-	#
-	# The `off` half is not decoration and was missing. Leaving the tie to the ordinary
-	# tie-break looks like the other policy and is not one: every pseudo-option sorts
-	# last in ballot order, so BALLOT_ORDER handed the tie to the map as well and the
-	# setting decided nothing in either position.
+	# Both halves of extend_needs_majority live here. On: extend leading on a tie is not
+	# winning, or a server never changes. Off: the incumbent keeps the tie; leaving it to
+	# BALLOT_ORDER would hand it to the map, since pseudo-options sort last.
 	if tied.size() > 1 and tied.has(EXTEND):
 		if rules.extend_needs_majority:
 			tied.erase(EXTEND)

@@ -1,23 +1,9 @@
 class_name DotVoteCommands
 extends RefCounted
 
-## The console and chat commands, on a dot-server, in one call.
-##
-## [codeblock]
-## DotVoteCommands.install(self, director)   # from a DotModule's _module_loaded
-## [/codeblock]
-##
-## [b]Duck-typed, like everything else here.[/b] The host is anything with
-## [code]add_command[/code] (a [code]DotModule[/code]) or [code]command[/code] (a
-## [code]DotConsole[/code]), and a command context is anything with
-## [code]reply[/code] and [code]args[/code] — so this file names no dot-server class
-## and dot-vote stays installable without it.
-##
-## [b]Every name is configurable, and it has to be.[/b] dot-server already ships
-## [code]vote[/code] and a votekick; a timer server's players type
-## [code]!rtv[/code] and [code]!nominate[/code]; a player from the older shooters
-## types [code]timeleft[/code] and [code]nextmap[/code]. Pass [member names] to rename any
-## of them, or [member prefix] to move the lot out of the way.
+## The console and chat commands, on a dot-server, in one call: [code]DotVoteCommands.install(self, director)[/code] from a DotModule's _module_loaded.
+## Duck-typed so dot-vote installs without dot-server: the host has [code]add_command[/code] or [code]command[/code], a context has [code]reply[/code] and [code]args[/code].
+## Every name is configurable ([member names], [member prefix]) because dot-server already ships [code]vote[/code] and players of other servers type different words.
 
 const CHANNEL := "vote.commands"
 
@@ -44,9 +30,7 @@ const DEFAULTS := {
 }
 
 ## Which of the above are also typable in chat as [code]!name[/code].
-##
-## The players' four. The rest are an operator's and stay on the console, because a
-## chat command that changes the map is one a compromised client can spam.
+## The players' commands only; a chat command that changes the map could be spammed by a compromised client.
 const CHAT := ["nominate", "rtv", "unrtv", "vote", "timeleft", "nextmap", "nominations"]
 
 ## Roles that need a permission, and which one.
@@ -84,28 +68,14 @@ var chat_prefix: String = "!"
 var skipped: PackedStringArray = PackedStringArray()
 
 ## Permission an admin command needs. Empty makes them console-only.
-##
-## [b]`changemap`, which is dot-server's [code]DotAdminFlags.CHANGEMAP[/code][/b] — spelled
-## out rather than named, because naming it would make this file fail to parse in a
-## project without dot-server. It was [code]"changelevel"[/code], which is the name of a
-## COMMAND and not a flag anybody holds: [code]DotAdminFlags.granted[/code] matches the
-## string exactly, so every admin vote command was quietly root-only, and an operator
-## who granted an admin the map flag found them refused with nothing saying why.
+## `changemap` is [code]DotAdminFlags.CHANGEMAP[/code], spelled out so the file parses without dot-server; [code]DotAdminFlags.granted[/code] matches the string exactly.
 var admin_permission: String = "changemap"
 
-## How a command context becomes a voter id.
-##
-## The default reads the session's userid, which is what dot-server keys a player on.
-## A game with its own player ids overrides it.
+## How a command context becomes a voter id; the default reads the session's userid, which dot-server keys a player on.
 var voter_fn: Callable = Callable()
 
 ## How what a player typed becomes a choice id: [code](text: String) -> StringName[/code].
-##
-## The default takes the text as it is. A game whose ids carry a prefix — arena's
-## [code]map:dm_atrium[/code] beside [code]mode:koth[/code] — sets this, because a player
-## types [code]!nominate dm_atrium[/code] and a command that refused it would be a
-## command nobody can use. Every command that takes a name goes through it: nominate,
-## unnominate, a vote by name, setnextmap and nominate_addmap.
+## For a game whose ids carry a prefix ([code]map:dm_atrium[/code]); every command that takes a name goes through it.
 var resolve_fn: Callable = Callable()
 
 ## Names actually registered, for a module that has to remove them again.
@@ -231,7 +201,6 @@ func bind(host: Object) -> DotResult:
 	return DotResult.success(registered)
 
 
-# --- Context helpers -------------------------------------------------------
 
 func _voter(ctx: Object) -> StringName:
 	if voter_fn.is_valid():
@@ -280,7 +249,6 @@ func _reply_result(ctx: Object, result: DotResult, ok_text: String) -> void:
 	])
 
 
-# --- Players' commands -----------------------------------------------------
 
 func _cmd_nominate(ctx: Object) -> void:
 	var args := _args(ctx)
@@ -348,11 +316,7 @@ func _cmd_unrtv(ctx: Object) -> void:
 
 
 ## Votes by name, or by the number shown on the ballot.
-##
-## [b]The number matters more than it looks.[/b] A player typing a map name into chat
-## gets it wrong, and a ballot is a numbered list on their screen — so [code]!votefor
-## 2[/code] is what they will actually type, and refusing it makes voting by chat
-## unusable.
+## Players type the number from their screen, not a map name.
 func _cmd_vote(ctx: Object) -> void:
 	var args := _args(ctx)
 
@@ -406,7 +370,6 @@ func _cmd_nextmap(ctx: Object) -> void:
 	_reply(ctx, "Next: %s." % (String(next) if next != &"" else "undecided"))
 
 
-# --- Operators' commands ---------------------------------------------------
 
 ## An admin's "vote now". Through the countdown if there is one, and replacing a change
 ## already decided, because an admin asking for a vote has decided the last one does
@@ -482,9 +445,7 @@ func _cmd_status(ctx: Object) -> void:
 
 
 ## The summary, or every one of the forty-odd settings with [code]full[/code].
-##
-## Both, because they answer different questions: the summary is "how does this server
-## vote", and the dump is "why did it just do that".
+## The summary says how the server votes; the dump says why it just did that.
 func _cmd_rules(ctx: Object) -> void:
 	var args := _args(ctx)
 

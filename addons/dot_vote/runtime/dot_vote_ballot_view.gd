@@ -1,42 +1,9 @@
 class_name DotVoteBallotView
 extends RefCounted
 
-## A ballot as a player's screen draws it: the options, the counts, who voted for what, and
-## how to choose.
-##
-## [b]The other half of [DotVoteClockView][/b], and built the same way: a dictionary a
-## server makes from the director it runs and a client draws from, with no wire format of
-## its own. Whatever carries it — a game's netcode bridge, dot-server's notice — is the
-## host's, for the reason this addon has no wire format at all.
-##
-## [b]A ballot used to reach a player as chat[/b], a numbered list in a scrollback they
-## answered by typing. That still works and nothing here replaces it: this is what a client
-## needs to draw the same ballot as a menu that takes a number key or a click, and to show
-## each voter's avatar on the option they chose.
-##
-## The dictionary, every field optional to a reader:
-##
-## [codeblock]
-## {
-##   "open": true,                 # false: the ballot closed; "winner" says what won
-##   "runoff": false,
-##   "seconds": 27.0,              # left, from the moment it arrives; the client counts
-##   "input": "both",              # numbers | pointer | both — DotVoteRules.ballot_input
-##   "multi": false,               # true: ranked or approval, a click adds rather than replaces
-##   "options": [{"id": "dm_hall", "label": "Hall", "votes": 2.0}, ...],
-##   "voters": {"u7": 0, "u12": 1},  # voter -> index into options; absent when secret
-##   "people": {"u7": {"name": "ana", "avatar": "https://..."}},
-##   "winner": "Hall",             # only when closed
-##   "title": "Vote for the next map",   # the host's
-##   "command": "votefor",               # the host's: what a choice is typed as, with its number
-## }
-## [/codeblock]
-##
-## [b]Options are in [method DotVoteBallot.option_ids] order[/b] — the order a typed number
-## indexes, so option [code]i[/code] is [code]!<command> i+1[/code] on every screen and in
-## every console. Never [method DotVoteBallot.countable_ids], which is the tie-break order.
-##
-## A pure function of the director. It logs nothing.
+## A ballot as a player's screen draws it: options, counts, who voted for what, and how to choose.
+## The other half of [DotVoteClockView]: a dictionary a server makes from its director and a client draws from, with no wire format of its own. Fields: docs/design.md "A ballot a player can click".
+## Options are in [method DotVoteBallot.option_ids] order (what a typed number indexes), never [method DotVoteBallot.countable_ids]. A pure function of the director; logs nothing.
 
 ## Most options sent. [member DotVoteRules.max_options] is at most 32 already; this is what a
 ## reader can rely on without trusting the writer.
@@ -52,10 +19,7 @@ const MAX_LABEL := 48
 
 
 ## The ballot [param director] has open, or a closed one when it has none.
-##
-## [param people_fn] answers [code]voter -> {"name": String, "avatar": String}[/code] for
-## the voters shown — the host's, because who a voter id is belongs to the server, not this
-## addon. Optional; without it voters are drawn by id.
+## [param people_fn] answers [code]voter -> {"name", "avatar"}[/code] (the host's, since voter ids are the server's); optional.
 static func state_of(director: DotVoteDirector, people_fn: Callable = Callable()) -> Dictionary:
 	if director == null or director.ballot == null or not director.ballot.open:
 		return {"open": false}

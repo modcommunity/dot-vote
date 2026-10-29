@@ -2,37 +2,8 @@ class_name DotVoteBans
 extends RefCounted
 
 ## A vote to ban one player: yes or no, one at a time, enabled per server and per role.
-##
-## [codeblock]
-## var bans := DotVoteBans.new()
-## bans.voters_fn = func() -> Array: return humans_playing()          # ids
-## bans.role_fn = func(id: StringName) -> String: return "admin" if is_admin(id) else "player"
-## bans.ban_fn = func(target: StringName, minutes: float, reason: String) -> void: ...
-## bans.rules.bind(self)                   # the sv_voteban* cvars
-## bans.bind_commands(self)                # voteban, voteban_yes, voteban_no
-## # A game that wants one, for a reason of its own (the one API):
-## bans.start(&"", target, "team damage")  # &"" is the game, not a player
-## # and from its own tick:
-## bans.advance(delta)
-## [/codeblock]
-##
-## [b]Why it is its own thing and not a ballot.[/b] [DotVoteDirector] is an engine over
-## choices that become the next map; this is one question about one person, with its own
-## clock, its own eligibility (everybody but the target) and a consequence (a ban) that is the
-## game's to carry out. It holds no ban list: [member ban_fn] is the game's, and dot-server's
-## [code]DotBanManager[/code] is what it calls there. Nothing here names a dot-server class.
-##
-## [b]Who decides what.[/b] [member rules] holds every policy (the cvars). [member role_fn]
-## names a role for a player and the rules say which roles may start one and which are
-## immune. A start from the game ([constant GAME] as starter) skips the start role and the
-## starter's cooldown, never the target's immunity or the cooldown on the target: an automatic
-## trigger must not be a way to ban a moderator, nor to run the same vote every second.
-##
-## [b]It passes when enough say yes, not when the clock runs out.[/b] The yes needed is
-## [code]ceil(threshold * eligible)[/code], fixed when the vote opens (a player leaving shrinks
-## the electorate, so it is recomputed); it passes the moment that many have said yes and
-## fails the moment that many yes can no longer happen, or when the time runs out. Silence is
-## therefore a no, which is the safe way round for a ban.
+## Its own thing, not a ballot: one question about one person, with its own clock, eligibility (all but the target) and a consequence the game carries out through [member ban_fn]. It holds no ban list and names no dot-server class. Setup: docs/design.md "Votebans".
+## [member rules] holds every policy and [member role_fn] names roles. A start from the game ([constant GAME]) skips the start role and starter cooldown, never the target's immunity or cooldown. It passes when [code]ceil(threshold * eligible)[/code] say yes and fails when that can no longer happen or time runs out, so silence is a no.
 
 const CHANNEL := "vote.bans"
 
@@ -242,7 +213,6 @@ func describe() -> Dictionary:
 			"eligible": _eligible.size(), "needed": yes_needed() if _open else 0, "rules": rules.describe()}
 
 
-# --- Commands ---------------------------------------------------------------------------
 
 ## Registers `voteban <player> [reason]`, `voteban_yes` and `voteban_no` (typable in chat),
 ## and the cvars. [param host] is a DotModule (add_command) or console (command).

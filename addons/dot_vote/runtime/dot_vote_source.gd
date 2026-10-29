@@ -2,19 +2,8 @@ class_name DotVoteSource
 extends RefCounted
 
 ## Where the choices come from, and what "play this one" means.
-##
-## [b]The one seam that makes this addon general.[/b] Everything above it — the
-## ballot, the clock, the nominations, the cooldown — works in ids. A source is the
-## only thing that knows an id is a dot-server game, a dot-map map, a mode, or a row
-## in somebody's database, and it is the only file that has to be written to point
-## this at something new.
-##
-## Subclass it, or use [DotVoteListSource] and hand it a [Callable].
-##
-## [b]On [method apply] being awaited.[/b] Changing a game is a coroutine — it
-## announces content, waits for every client to fetch it, then swaps — and changing a
-## row in a list is not. [DotVoteDirector] awaits the result either way, which GDScript
-## allows, so a source is free to be whichever it is.
+## The one seam that makes the addon general: everything above works in ids, and only a source knows an id is a game, a map or a database row. Subclass it, or hand [DotVoteListSource] a [Callable].
+## [method apply] may be a coroutine; [DotVoteDirector] awaits the result either way.
 
 ## A short name for logs and console output.
 func source_name() -> String:
@@ -22,9 +11,7 @@ func source_name() -> String:
 
 
 ## Everything that could be offered, in the source's own order.
-##
-## Called every time a ballot is filled rather than cached, because a server that adds
-## a game at runtime — every module that does — would otherwise never offer it.
+## Called on every ballot fill, not cached, so a game added at runtime is offered.
 func choices() -> Array[DotVoteChoice]:
 	return []
 
@@ -55,30 +42,20 @@ func ids() -> Array[StringName]:
 	return out
 
 
-## Re-reads whatever this source caches. What an admin's "reload the list" asks for.
-##
-## [b]Most sources cache nothing[/b] — [method choices] is called fresh every time a
-## ballot is filled, so a catalogue edited at runtime is already current — and the
-## default says so rather than pretending to have done something. A source that reads a
-## file overrides it.
+## Re-reads whatever this source caches, for an admin's "reload the list".
+## Most sources cache nothing, so the default does nothing; a source that reads a file overrides it.
 func reload() -> DotResult:
 	return DotResult.success(0)
 
 
-## Called by [DotVoteDirector] when a choice begins and whenever a ballot is about to be
-## filled. Nothing by default; [DotVoteListSource] re-reads its
-## [member DotVoteListSource.entries_fn] here. A source whose [method choices] is already
-## live has nothing to do.
+## Called by [DotVoteDirector] when a choice begins and before a ballot is filled; nothing by default.
+## [DotVoteListSource] re-reads its [member DotVoteListSource.entries_fn] here.
 func before_ballot() -> void:
 	pass
 
 
 ## Whether this source can act on a result at all.
-##
-## [b]A source that only lists is legitimate[/b] and is what a client-side mirror of a
-## server's vote is: it shows the ballot, it counts nothing, and the change arrives
-## from the server. [DotVoteDirector] emits [signal DotVoteDirector.change_due] either
-## way, so a host can always do it itself.
+## A source that only lists is legitimate (a client-side mirror of a server's vote); [signal DotVoteDirector.change_due] is emitted either way.
 func supports_apply() -> bool:
 	return false
 

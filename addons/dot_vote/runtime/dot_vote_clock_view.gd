@@ -2,49 +2,15 @@ class_name DotVoteClockView
 extends RefCounted
 
 ## The time left on a vote's clock, as somebody who is not running it sees it.
-##
-## [b]A client does not have the clock; it has the last thing it was told about it.[/b]
-## The games that put a map's time left on their HUD drew it from their own map session,
-## which on a client is a clock started when the client loaded the map and advanced by
-## nothing the server decides — so an extend never reached it, a `trigger: rtv_only`
-## server showed a limit it did not have, and the number was only ever right by
-## coincidence. The vote owns
-## the clock that ends a map, so the vote is what a HUD has to be told about.
-##
-## [b]One class for both ends, and that is what keeps them in step.[/b] A server keeps one
-## of these as its record of what clients believe, and asks [method is_stale] each tick:
-## the clock was extended, restarted, stopped for a ballot, or has simply drifted. Only then
-## does it send [method state_of] again. A client [method adopt]s the same dictionary and
-## counts it down itself between messages. Both ends extrapolate with this file's
-## arithmetic, so the server's idea of what a client shows cannot differ from what the
-## client shows.
-##
-## [codeblock]
-## # server, once a tick
-## if view.is_stale(director, now):
-##     view.adopt(DotVoteClockView.state_of(director), now)
-##     send_to_everyone(view.to_state())
-## # client, when a message arrives, and every frame
-## view.adopt(state, Time.get_ticks_msec() / 1000.0)
-## label.text = view.formatted_at(Time.get_ticks_msec() / 1000.0)
-## [/codeblock]
-##
-## [b]Times are seconds on the caller's own clock.[/b] A server passes simulated time and a
-## client passes wall time; neither is ever compared with the other, only with itself.
-##
-## A pure value object: it returns what it knows and logs nothing.
+## A client has only the last thing it was told: a server keeps one as its record of what clients believe and asks [method is_stale] each tick, a client [method adopt]s [method state_of] and counts down itself, both with this file's arithmetic.
+## Times are seconds on the caller's own clock, never compared across ends. A pure value object; logs nothing.
 
 ## Seconds of disagreement before a server resends. Above one second, because the state is
 ## whole seconds and a client that rounds the other way is a second out and not wrong.
 const STALE_TOLERANCE_SEC := 1.5
 
 ## Seconds after which a running clock is sent again even though it agrees.
-##
-## [b]The two ends count on different clocks[/b] — a server in simulated time, a client in
-## wall time — and [method is_stale] only ever compares the server with itself. A server
-## that falls behind real time (a slow tick, a paused process) therefore has clients
-## counting ahead of it that nothing corrects, however long the map runs. One small
-## message every half minute bounds that drift; a quiet map still sends nothing else.
+## The ends count on different clocks and [method is_stale] compares the server only with itself, so this one small message bounds client drift.
 const RESYNC_SEC := 30.0
 
 ## Whether anything has been adopted. False is "never told", which a HUD answers
@@ -66,9 +32,7 @@ var _at: float = 0.0
 
 
 ## What a client should show, taken from the director that owns the clock.
-##
-## [param director] is duck-typed in the sense that null is allowed: a server with no vote
-## has no clock to show, and says so.
+## [param director] may be null: a server with no vote has no clock to show.
 static func state_of(director: DotVoteDirector) -> Dictionary:
 	if director == null or director.clock == null or director.rules == null:
 		return {"has_clock": false, "seconds_left": 0, "running": false}
@@ -90,9 +54,7 @@ static func state_of(director: DotVoteDirector) -> Dictionary:
 
 
 ## Takes a state from [method state_of], as seen at [param now].
-##
-## Every field is defaulted: this is what a wire message is decoded into, and a message
-## missing a field should show a plainer clock rather than raise.
+## Every field is defaulted, since a wire message missing one should show a plainer clock, not raise.
 func adopt(state: Dictionary, now: float) -> void:
 	known = true
 	has_clock = bool(state.get("has_clock", false))
@@ -132,10 +94,8 @@ func formatted_at(now: float) -> String:
 	return "%d:%02d" % [total / 60, total % 60]
 
 
-## Whether what this view shows at [param now] is no longer what [param director]'s clock
-## says: never told, a clock that appeared or went, one that stopped or started, or a
-## count more than [constant STALE_TOLERANCE_SEC] out — which is what an extend, a new
-## map and a ballot that kept the map all look like from here.
+## Whether what this view shows at [param now] no longer matches [param director]'s clock.
+## Covers: never told, a clock that appeared or went, one that stopped or started, or a count more than [constant STALE_TOLERANCE_SEC] out (extend, new map, kept map).
 func is_stale(director: DotVoteDirector, now: float) -> bool:
 	if not known:
 		return true
