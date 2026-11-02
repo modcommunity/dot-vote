@@ -64,6 +64,9 @@ var humans_fn: Callable = Callable()
 ## source's own apply, which in a round-based game is often "next round".
 var change_fn: Callable = Callable()
 
+## Applies a mode picked with the map, `(id: StringName, mode: StringName) -> DotResult`, before an outright change; unset, the mode is ignored. A vote cannot carry one.
+var mode_fn: Callable = Callable()
+
 ## `func(rows: Array) -> Array`: a game decorating the rows (a mode line, a thumbnail) or
 ## replacing them. Each row is `{id, name, mode, detail, thumbnail, current}`.
 var rows_fn: Callable = Callable()
@@ -262,7 +265,7 @@ func offer(ctx: Object) -> Dictionary:
 
 ## The player behind [param ctx] chose [param id]: a change when allowed, a vote when not.
 ## Returns `{ok, text, how}`, `how` one of `changed`, `voted`, `refused`.
-func choose(ctx: Object, id: StringName) -> Dictionary:
+func choose(ctx: Object, id: StringName, mode: StringName = &"") -> Dictionary:
 	var director := commands.director
 	if director == null or director.source == null:
 		return _result(false, "There is no map called '%s'." % id, "refused")
@@ -271,7 +274,7 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 	var label := director.option_label(id)
 
 	if may_change(ctx):
-		return await _change_now(ctx, id, label)
+		return await _change_now(ctx, id, label, mode)
 
 	var needed := required_flag()
 	if not vote_available():
@@ -321,8 +324,13 @@ func choose(ctx: Object, id: StringName) -> Dictionary:
 
 
 ## A change the player may make outright: the map changes now.
-func _change_now(ctx: Object, id: StringName, label: String) -> Dictionary:
+func _change_now(ctx: Object, id: StringName, label: String, mode: StringName = &"") -> Dictionary:
 	var director := commands.director
+	if mode != &"" and mode_fn.is_valid():
+		var moded: Variant = await mode_fn.call(id, mode)
+		if moded is DotResult and not (moded as DotResult).ok:
+			return _result(false, (moded as DotResult).error.message, "refused")
+		label = "%s (%s)" % [label, mode]
 	# Whoever may change the map outright (staff, or the only human) outranks an open ballot:
 	# one left open by players who have since gone refused the last person on the server.
 	if director.is_voting():
@@ -378,7 +386,8 @@ func _cmd(ctx: Object) -> void:
 				lines.append("%s%s  (%s)" % ["* " if bool(r.get("current", false)) else "  ", r["name"], r["id"]])
 			ctx.call("reply_lines", lines)
 		return
-	var result: Dictionary = await choose(ctx, commands._resolve(args[0]))
+	var mode := StringName(args[1]) if args.size() > 1 else &""
+	var result: Dictionary = await choose(ctx, commands._resolve(args[0]), mode)
 	ctx.call("reply", str(result["text"]))
 	var _sent := _send(ctx, {"result": result})
 

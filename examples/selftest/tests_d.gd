@@ -212,6 +212,19 @@ func _test_map_menu_2() -> void:
 	await get_tree().process_frame
 	_check(_v_map_menu_now_ids == [&"docks"] and _v_map_menu_applied.size() == 1, "a game's change_fn (change now, not next round) is used when it gives one")
 
+	var moded: Array = []
+	_v_map_menu_commands.map_menu.mode_fn = func(id: StringName, mode: StringName) -> DotResult:
+		moded.append([id, mode])
+		return DotResult.success(mode)
+	_v_map_menu_console.call("execute", "mapmenu docks tdm", _v_map_menu_moderator)
+	await get_tree().process_frame
+	_check(moded == [[&"docks", &"tdm"]], "`mapmenu <id> <mode>` carries the mode to mode_fn (%s)" % str(moded))
+	_v_map_menu_console.call("execute", "mapmenu docks", _v_map_menu_moderator)
+	await get_tree().process_frame
+	_check(moded.size() == 1, "and `mapmenu <id>` alone carries none")
+	_v_map_menu_commands.map_menu.mode_fn = Callable()
+	_v_map_menu_now_ids.resize(1)
+
 	_v_map_menu_console.call("execute", "sv_map_menu_flag changemap", null)
 	_v_map_menu_console.call("execute", "mapmenu foundry", _v_map_menu_moderator)
 	await get_tree().process_frame

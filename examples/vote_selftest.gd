@@ -24,7 +24,7 @@ extends "res://examples/selftest/tests_i.gd"
 ## four call sites finding a null cloud client and none of them erroring. A vote that
 ## elects a winner and cannot make the server play it is exactly that shape.
 
-const CHECKS := 605
+const CHECKS := 607
 
 
 func _ready() -> void:
