@@ -82,6 +82,7 @@ func _run() -> void:
 	await _test_real_map_catalogue()
 	await _test_map_menu()
 	_test_describe()
+	_test_votebans()
 
 	DotPaths.remove_tree(DATA)
 
@@ -92,8 +93,6 @@ func _run() -> void:
 		"a section that aborted stops adding checks and the total cannot show it"
 	)
 
-	print("")
-	_test_votebans()
 	print("%d passed, %d failed" % [_passed, _failed])
 
 	for line in _failures:
