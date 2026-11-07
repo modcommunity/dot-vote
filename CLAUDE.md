@@ -26,7 +26,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 
 ## Running and testing
 
-- The family's two steps ([game-dev/CLAUDE.md](../../CLAUDE.md#validating-anything)), then `godot --headless --path . res://examples/vote_selftest.tscn` (non-zero on failure).
+- The family's two steps ([family CLAUDE.md](../../CLAUDE.md#validating-anything)), then `godot --headless --path . res://examples/vote_selftest.tscn` (non-zero on failure).
 - `addons/dot_map` and `addons/dot_server` must be linked; without them the two integration sections fail loudly, on purpose. [design](docs/design.md#the-suite)
 - A new check is not done until it has been armed: break the code it guards and watch it fire. [design](docs/design.md#four-rules-from-the-parity-work)
 
