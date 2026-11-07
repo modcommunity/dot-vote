@@ -35,5 +35,7 @@ extends RefCounted
 #     commands, when the ballot opens) once; a game extends it and sets its names.
 # 16: DotVoteRoundGame hooks a game overrides: _apply, _ballot_may_open, _map_noted, _ticked; the
 #     source's label is the noun, pluralised.
-const LEVEL := 16
+# 17: DotVoteTimedGame, the vote of a game on a clock (time limit, no rounds), extended by the game: director, source, feed, `!vote`,
+#     signal and clock relay once here.
+const LEVEL := 17
 const OLDEST := 1
