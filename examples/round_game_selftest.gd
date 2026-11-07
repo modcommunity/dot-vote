@@ -17,6 +17,30 @@ class _Game extends DotVoteRoundGame:
 	func _default_kinds() -> PackedStringArray:
 		return PackedStringArray(["toy_map"])
 
+## A game that uses every hook.
+class _Hooked extends _Game:
+	var held := true
+	var noted: Array = []
+	var ticks := 0
+	var refused: Array = []
+
+	func _apply(id: StringName) -> DotResult:
+		if id == &"bad":
+			refused.append(id)
+			return DotResult.fail(DotError.CODE_STATE, "cannot play it")
+
+		return super._apply(id)
+
+	func _ballot_may_open() -> bool:
+		return not held
+
+	func _map_noted(id: StringName) -> void:
+		noted.append(id)
+
+	func _ticked(_delta: float) -> void:
+		ticks += 1
+
+
 var _passed := 0
 var _failed := 0
 
@@ -115,6 +139,33 @@ func _run() -> void:
 	game.maps_fn = func() -> Array: return more
 	game.refresh_maps()
 	_check(game.source.entries.size() == 2, "refresh_maps reads the host's list again")
+
+	# Hooks: the label follows the noun, apply/ballot gate/map-built/tick are the game's.
+	var hooked := _Hooked.new()
+	var hooked_applied: Array = []
+	hooked.maps_fn = func() -> Array: return [["m1", "One"], ["m2", "Two"], ["bad", "Bad"]]
+	hooked.apply_fn = func(id: StringName) -> DotResult:
+		hooked_applied.append(id)
+		return DotResult.success(id)
+	hooked.voters_fn = func() -> Array: return [&"a", &"b"]
+	hooked.content_index = DotContentIndex.new()
+	add_child(hooked)
+	var _ready := hooked.setup()
+	hooked.note_map(&"m1")
+	_check(hooked.source.label == "courses", "the source's label is the noun, pluralised")
+	_check(hooked.noted == [&"m1"], "_map_noted runs when a map is built")
+	hooked.advance(hooked.open_after_sec + 5.0)
+	_check(hooked.ticks == 1 and not hooked.is_voting(), "_ticked runs each tick and _ballot_may_open holds the ballot back")
+	hooked.director.hibernating = true
+	hooked.advance(1.0)
+	_check(hooked.ticks == 2, "_ticked runs while hibernating")
+	hooked.director.hibernating = false
+	hooked.held = false
+	hooked.advance(0.1)
+	_check(hooked.is_voting(), "the ballot opens once _ballot_may_open allows")
+	var refusal := hooked.source.apply_fn.call(&"bad") as DotResult
+	var accepted := hooked.source.apply_fn.call(&"m2") as DotResult
+	_check(not refusal.ok and accepted.ok and hooked_applied == [&"m2"], "_apply can refuse an id before apply_fn")
 
 	var none := _Game.new()
 	_check(not none.install_commands(self).ok, "no commands before setup")

@@ -57,7 +57,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | To change | Where |
 | --- | --- |
 | Any policy at all | `DotVoteRules`, layered like every `DotConfig` (`defaults < file < DOT_VOTE_* < --vote-*`) |
-| A round-based game's whole next-map vote (director, source, feed, `!vote`, when the ballot opens) | extend `DotVoteRoundGame` (API 15): set `channel`, `metadata_key`, `command_names`, `config_path` in `_init`, override `_default_kinds()` and, for its own defaults, `_rules()`. `examples/round_game_selftest.tscn` |
+| A round-based game's whole next-map vote (director, source, feed, `!vote`, when the ballot opens) | extend `DotVoteRoundGame` (API 15; hooks `_apply`, `_ballot_may_open`, `_map_noted`, `_ticked` at 16): set `channel`, `metadata_key`, `command_names`, `config_path` in `_init`, override `_default_kinds()` and, for its own defaults, `_rules()`. `examples/round_game_selftest.tscn` |
 | A game's own defaults, under an operator's file | `DotVoteRules.layer_over_defaults(file, DotVoteGameSource.running_game_metadata("map_vote"))` |
 | What can be voted for | `DotVoteSource` subclass, or `DotVoteListSource` with a `Callable` |
 | Which maps the server's rotation (maps.yml) plays, and in what order | `DotVoteListSource.in_rotation_fn` / `rotation_order_fn`, applied to the merged `follow_content` maps too |

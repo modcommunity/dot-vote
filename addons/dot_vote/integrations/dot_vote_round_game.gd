@@ -107,9 +107,8 @@ func setup() -> DotResult:
 
 func _build_source() -> void:
 	source = DotVoteListSource.new()
-	source.label = "maps"
-	source.apply_fn = func(id: StringName) -> DotResult:
-		return apply_fn.call(id) if apply_fn.is_valid() else DotResult.success(id)
+	source.label = noun + "s"
+	source.apply_fn = _apply
 	source.entries_fn = func() -> Array:
 		return maps_fn.call() if maps_fn.is_valid() else []
 	refresh_maps()
@@ -123,6 +122,26 @@ func _build_source() -> void:
 	if "in_rotation_fn" in source:
 		source.set(&"in_rotation_fn", in_rotation_fn)
 		source.set(&"rotation_order_fn", rotation_order_fn)
+
+
+## Plays [param id] next: [member apply_fn], or a plain success when none is set. A game overrides it to refuse an id it cannot play.
+func _apply(id: StringName) -> DotResult:
+	return apply_fn.call(id) if apply_fn.is_valid() else DotResult.success(id)
+
+
+## Whether the ballot's timer may run this tick. A game overrides it to hold the timer back (until a map is in play).
+func _ballot_may_open() -> bool:
+	return true
+
+
+## A game's own work when a map is built (re-reading a list its host changes, say), after the director has begun on [param id].
+func _map_noted(_id: StringName) -> void:
+	pass
+
+
+## A game's own work on every tick, before the ballot's timer and with it still running while the server hibernates.
+func _ticked(_delta: float) -> void:
+	pass
 
 
 func _build_director() -> void:
@@ -253,6 +272,7 @@ func note_map(id: StringName) -> void:
 	director.begin(id)
 	_on_map_sec = 0.0
 	_opened_this_map = false
+	_map_noted(id)
 
 
 ## The server woke from hibernation: the map ballot is owed again, from the top.
@@ -284,9 +304,11 @@ func advance(delta: float) -> void:
 	if feed != null:
 		feed.poll()
 
+	_ticked(delta)
+
 	# The ballot's own timer waits with the director's clock while the server hibernates (DotGameModule hands the director its hibernation).
 	# Counted on, it ran past open_after_sec over an empty room and the ballot was refused for want of voters.
-	if director.hibernating:
+	if not _ballot_may_open() or director.hibernating:
 		return
 
 	_on_map_sec += delta

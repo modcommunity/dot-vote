@@ -33,5 +33,7 @@ extends RefCounted
 #     Needs dot-core API level 16 (DotAddonConfig.apply_file).
 # 15: DotVoteRoundGame, the next-map vote of a round-based game (director, list source, feed,
 #     commands, when the ballot opens) once; a game extends it and sets its names.
-const LEVEL := 15
+# 16: DotVoteRoundGame hooks a game overrides: _apply, _ballot_may_open, _map_noted, _ticked; the
+#     source's label is the noun, pluralised.
+const LEVEL := 16
 const OLDEST := 1
