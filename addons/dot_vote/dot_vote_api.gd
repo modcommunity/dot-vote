@@ -31,5 +31,7 @@ extends RefCounted
 # 13: DotVoteRules.apply_cfg_file and load_cfg read cfg/addons/dot_vote/<file>.yml and the
 #     operator's cfg/server/addons/dot_vote/, with the flat cfg/<file>.yml as a shim.
 #     Needs dot-core API level 16 (DotAddonConfig.apply_file).
-const LEVEL := 14
+# 15: DotVoteRoundGame, the next-map vote of a round-based game (director, list source, feed,
+#     commands, when the ballot opens) once; a game extends it and sets its names.
+const LEVEL := 15
 const OLDEST := 1

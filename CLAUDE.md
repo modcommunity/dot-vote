@@ -20,7 +20,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | --- | --- |
 | `addons/dot_vote/core/` | `DotVoteChoice` (an id, a name, a ballot's facts), `DotVoteResult`, `DotVoteRules` (every policy, a `DotConfig`) |
 | `addons/dot_vote/runtime/` | `DotVoteDirector` (the engine), `DotVoteBallot`, `DotVoteClock`, `DotVoteNominations`, `DotVoteHistory`, `DotVoteSource` / `DotVoteListSource`, and the client views `DotVoteClockView`, `DotVoteBallotView`, `DotVoteBallotFeed` |
-| `addons/dot_vote/integrations/` | `DotVoteCommands`, `DotVoteMapMenu` (the M menu's server half, installed with the commands), `DotVoteMapSource` (dot-map), `DotVoteGameSource` (dot-server's `DotGameManager`) |
+| `addons/dot_vote/integrations/` | `DotVoteCommands`, `DotVoteMapMenu` (the M menu's server half, installed with the commands), `DotVoteMapSource` (dot-map), `DotVoteGameSource` (dot-server's `DotGameManager`), `DotVoteRoundGame` (a round-based game's next-map vote, extended by the game) |
 | `addons/dot_vote/runtime/dot_vote_bans.gd`, `dot_vote_ban_rules.gd` | `DotVoteBans` (a yes/no vote to ban one player; `start`, `vote`, `ban_fn`) and its `sv_voteban*` cvars. [design](docs/design.md#votebans) |
 | `examples/vote_selftest.tscn` | the suite; `examples/fixtures/` its data |
 
@@ -57,6 +57,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | To change | Where |
 | --- | --- |
 | Any policy at all | `DotVoteRules`, layered like every `DotConfig` (`defaults < file < DOT_VOTE_* < --vote-*`) |
+| A round-based game's whole next-map vote (director, source, feed, `!vote`, when the ballot opens) | extend `DotVoteRoundGame` (API 15): set `channel`, `metadata_key`, `command_names`, `config_path` in `_init`, override `_default_kinds()` and, for its own defaults, `_rules()`. `examples/round_game_selftest.tscn` |
 | A game's own defaults, under an operator's file | `DotVoteRules.layer_over_defaults(file, DotVoteGameSource.running_game_metadata("map_vote"))` |
 | What can be voted for | `DotVoteSource` subclass, or `DotVoteListSource` with a `Callable` |
 | Which maps the server's rotation (maps.yml) plays, and in what order | `DotVoteListSource.in_rotation_fn` / `rotation_order_fn`, applied to the merged `follow_content` maps too |
