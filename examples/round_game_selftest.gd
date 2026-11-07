@@ -161,7 +161,7 @@ func _run() -> void:
 	_check(hooked.ticks == 2, "_ticked runs while hibernating")
 	hooked.director.hibernating = false
 	hooked.held = false
-	hooked.advance(0.1)
+	hooked.advance(hooked.open_after_sec + 1.0)
 	_check(hooked.is_voting(), "the ballot opens once _ballot_may_open allows")
 	var refusal := hooked.source.apply_fn.call(&"bad") as DotResult
 	var accepted := hooked.source.apply_fn.call(&"m2") as DotResult
