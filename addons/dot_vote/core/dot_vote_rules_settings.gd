@@ -209,10 +209,10 @@ enum RtvAfterDecided {
 ## Rounds the current choice runs for. 0 disables the round limit.
 ##
 ## Both limits can be on at once and whichever arrives first ends it.
-@export_range(0, 512, 1) var round_limit: int = 0
+@export_range(0, 512, 1, "or_greater") var round_limit: int = 0
 
 ## The leading score that ends the current choice. 0 disables the score limit.
-@export_range(0, 100000, 1) var score_limit: int = 0
+@export_range(0, 100000, 1, "or_greater") var score_limit: int = 0
 
 ## Points short of [member score_limit] at which the ballot opens.
 @export_range(0, 1000, 1) var vote_lead_score: int = 5
@@ -224,13 +224,13 @@ enum RtvAfterDecided {
 @export_range(0.0, 3600.0, 30.0) var extend_seconds: float = 600.0
 
 ## Rounds an extend adds, when the limit is in rounds.
-@export_range(0, 64, 1) var extend_rounds: int = 3
+@export_range(0, 64, 1, "or_greater") var extend_rounds: int = 3
 
 ## Points an extend adds to [member score_limit], when there is one.
-@export_range(0, 10000, 1) var extend_score: int = 10
+@export_range(0, 10000, 1, "or_greater") var extend_score: int = 10
 
 ## How many times one choice may be extended. 0 = unlimited.
-@export_range(0, 64, 1) var max_extends: int = 3
+@export_range(0, 64, 1, "or_greater") var max_extends: int = 3
 
 ## Whether extending clears the rock-the-vote tally.
 @export var extend_resets_rtv: bool = true
@@ -252,7 +252,7 @@ enum RtvAfterDecided {
 @export_range(0.0, 1.0, 0.05) var rtv_fraction: float = 0.6
 
 ## Fewest players before rocking the vote does anything.
-@export_range(1, 64, 1) var rtv_min_players: int = 1
+@export_range(1, 64, 1, "or_greater") var rtv_min_players: int = 1
 
 ## Seconds at the start of a choice during which rocking the vote is refused.
 ##
@@ -281,10 +281,10 @@ enum RtvAfterDecided {
 @export var nominations_enabled: bool = true
 
 ## How many things one player may have nominated at once.
-@export_range(1, 16, 1) var nominations_per_player: int = 1
+@export_range(1, 16, 1, "or_greater") var nominations_per_player: int = 1
 
 ## Most nominations held in total. 0 = unlimited.
-@export_range(0, 64, 1) var nominations_max: int = 16
+@export_range(0, 64, 1, "or_greater") var nominations_max: int = 16
 
 ## Whether the thing currently running may be nominated.
 @export var nominate_current_allowed: bool = false
@@ -356,7 +356,7 @@ enum RtvAfterDecided {
 @export var changeable_until_close: bool = true
 
 ## Fewest players before a ballot may be opened at all.
-@export_range(0, 64, 1) var min_players_to_vote: int = 1
+@export_range(0, 64, 1, "or_greater") var min_players_to_vote: int = 1
 
 ## Whether an automatic ballot (time, rounds, score, rock-the-vote) may open with one voter.
 @export var allow_single_voter_auto: bool = false
@@ -372,7 +372,7 @@ enum RtvAfterDecided {
 @export var method: Method = Method.PLURALITY
 
 ## Under [constant Method.APPROVAL], most options one voter may approve. 0 = all.
-@export_range(0, 32, 1) var approval_max_choices: int = 0
+@export_range(0, 32, 1, "or_greater") var approval_max_choices: int = 0
 
 ## What share of the votes cast counts as a majority, 0..1.
 @export_range(0.05, 1.0, 0.01) var majority_fraction: float = 0.5
@@ -381,7 +381,7 @@ enum RtvAfterDecided {
 @export_range(2, 8, 1) var runoff_options: int = 2
 
 ## Most runoffs before the leader is simply taken. 0 refuses to run one at all.
-@export_range(0, 8, 1) var max_runoffs: int = 1
+@export_range(0, 8, 1, "or_greater") var max_runoffs: int = 1
 
 @export var tie_break: TieBreak = TieBreak.BALLOT_ORDER
 
@@ -420,7 +420,7 @@ enum RtvAfterDecided {
 @export_range(0.0, 1.0, 0.05) var cooldown_max_fraction: float = 0.5
 
 ## Longest play history kept. Bounds the memory on a server up for months.
-@export_range(8, 1024, 8) var history_limit: int = 64
+@export_range(8, 1024, 8, "or_greater") var history_limit: int = 64
 
 @export_group("Applying")
 
